@@ -63,4 +63,4 @@ result = css2less(cssString, options);
 console.log(result);
 ```
 
-Author [css2less](http://www.miyconst.com/Blog/View/14/conver-css-to-less-with-css2less-js)
+<!-- Author [css2less](http://www.miyconst.com/Blog/View/14/conver-css-to-less-with-css2less-js) -->
