@@ -8,7 +8,7 @@ npm install css2less --save-dev
 ###Options:
 #### options.indentSize
 Type: `Number`  
-Default value: `4`  
+Default value: `1`  
 Desc: Indent size.
 
 #### options.vendorPrefixesList
@@ -18,7 +18,7 @@ Desc: List of vendor prefixes.
 
 #### options.indentSymbol
 Type: `String`  
-Default value: ` `  
+Default value: `\t`  
 Desc: Indent symbol.
 
 #### options.selectorSeparator
@@ -28,8 +28,8 @@ Desc: Selector separator.
 
 #### options.blockFromNewLine
 Type: `Bolean`  
-Default value: `true`  
-Desc: Start block from new line.
+Default value: `false`  
+Desc: Start first '{' from the new line
 
 #### options.blockSeparator
 Type: `String`  
@@ -38,19 +38,13 @@ Desc: Separator between blocks.
 
 #### options.updateColors
 Type: `Bolean`  
-Default value: `true`  
+Default value: `false`  
 Desc: Use variables for colors.
 
 #### options.vendorMixins
 Type: `Boolean`  
 Default value: `true`  
 Desc: Create function for vendor styles.
-
-#### options.nameValueSeparator
-Type: `String`  
-Default value: `: `  
-Desc: Separator between css name and value.
-
 
 ##Example
 ```javascript

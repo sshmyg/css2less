@@ -61,12 +61,12 @@ var css2less = function (css, options) {
 			cssColors: ["aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige", "bisque", "black", "blanchedalmond", "blue", "blueviolet", "brown", "burlywood", "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue", "cornsilk", "crimson", "cyan", "darkblue", "darkcyan", "darkgoldenrod", "darkgray", "darkgrey", "darkgreen", "darkkhaki", "darkmagenta", "darkolivegreen", "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen", "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise", "darkviolet", "deeppink", "deepskyblue", "dimgray", "dimgrey", "dodgerblue", "firebrick", "floralwhite", "forestgreen", "fuchsia", "gainsboro", "ghostwhite", "gold", "goldenrod", "gray", "grey", "green", "greenyellow", "honeydew", "hotpink", "indianred", "indigo", "ivory", "khaki", "lavender", "lavenderblush", "lawngreen", "lemonchiffon", "lightblue", "lightcoral", "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgrey", "lightgreen", "lightpink", "lightsalmon", "lightseagreen", "lightskyblue", "lightslategray", "lightslategrey", "lightsteelblue", "lightyellow", "lime", "limegreen", "linen", "magenta", "maroon", "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple", "mediumseagreen", "mediumslateblue", "mediumspringgreen", "mediumturquoise", "mediumvioletred", "midnightblue", "mintcream", "mistyrose", "moccasin", "navajowhite", "navy", "oldlace", "olive", "olivedrab", "orange", "orangered", "orchid", "palegoldenrod", "palegreen", "paleturquoise", "palevioletred", "papayawhip", "peachpuff", "peru", "pink", "plum", "powderblue", "purple", "red", "rosybrown", "royalblue", "saddlebrown", "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue", "slateblue", "slategray", "slategrey", "snow", "springgreen", "steelblue", "tan", "teal", "thistle", "tomato", "turquoise", "violet", "wheat", "white", "whitesmoke", "yellow", "yellowgreen"],
 			vendorPrefixesList: ["-moz", "-o", "-ms", "-webkit"],
 			//vendorPrefixesReg: /^(-moz|-o|-ms|-webkit)-/gi,
-			indentSymbol: " ",
-			indentSize: 4,
+			indentSymbol: "\t",
+			indentSize: 1,
 			selectorSeparator: ",\n",
-			blockFromNewLine: true,
+			blockFromNewLine: false,
 			blockSeparator: "\n",
-			updateColors: true,
+			updateColors: false,
 			vendorMixins: true,
 			nameValueSeparator: ": "
 		};
@@ -75,10 +75,7 @@ var css2less = function (css, options) {
 		me.options.vendorPrefixesReg = new RegExp('^(' + vendorPrefixesListStr + ')-', 'gi');
 
 		for (var i in me.options) {
-			if (typeof options[i] == "undefined") {
-				continue;
-			}
-
+			if (typeof options[i] === 'undefined') continue;
 			me.options[i] = options[i];
 		}
 
@@ -109,7 +106,19 @@ var css2less = function (css, options) {
 	}
 
 	me.convertRules = function (data) {
-		return data.split(/[;]/gi).select("val=>val.trim()").where("val=>val");
+		var arr = data.split(/[;]/gi).select("val=>val.trim()").where("val=>val"),
+			isBase64 = false;
+
+		arr.forEach(function(item, i) {
+			if (item.indexOf('base64') !== -1) isBase64 = i;
+		});
+		
+		if (isBase64) {
+			arr[isBase64 - 1] = arr[isBase64 - 1] + ';' + arr[isBase64];
+			arr.splice(isBase64, 1);
+		}
+		
+		return arr;
 	};
 
 	me.color = function (value) {
@@ -278,7 +287,7 @@ var css2less = function (css, options) {
 		var styles = [];
 
 		for (var i = 0; i < temp.length; i++) {
-			if (i % 2 == 0) {
+			if (i % 2 === 0) {
 				styles.push([temp[i]]);
 			} else {
 				styles[styles.length - 1].push(temp[i]);
@@ -338,7 +347,7 @@ var css2less = function (css, options) {
 			});
 
 			less.push(getIndent(indent + me.options.indentSize), k, me.options.nameValueSeparator, args.join(" "), ";\n");
-			less.push(getIndent(indent), "}\n");
+			less.push(/*getIndent(indent), */"}\n");
 		}
 
 		if (less.any()) {
@@ -385,7 +394,7 @@ var css2less = function (css, options) {
 					me.less.push(me.options.blockSeparator);
 				}
 
-				me.less.push(getIndent(indent), i);
+				me.less.push(/*getIndent(indent),*/ i);
 
 				if (me.options.blockFromNewLine) {
 					me.less.push("\n", getIndent(indent));
@@ -409,22 +418,35 @@ var css2less = function (css, options) {
 
 					if (children && children.length) {
 						me.less.push(me.options.blockSeparator);
+						me.less.push(getIndent(indent));
 					}
 				}
 
 				me.renderLess(element, indent + me.options.indentSize);
-				me.less.push(getIndent(indent), "}\n");
+				me.less.push(/*getIndent(indent),*/ "}\n");
+				
 				index++;
 			}
 		}
 	};
 
 	function getIndent(size) {
-		typeof size == "undefined" ? me.options.indentSize : size;
-		return (new Array(size)).select(function (it, i) {
+		size = size || me.options.indentSize;
+
+		var result = '',
+			indent;
+
+		var max = size,
+			n = 0;
+		for (; n < max; n++) {
+			result += me.options.indentSymbol;
+		}
+
+		return result;
+		/*return (new Array(size)).select(function (it, i) {
 			return me.options.indentSymbol;
-		}).join("");
-	};
+		}).join("");*/
+	}
 
 	ctor();
 };
