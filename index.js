@@ -394,7 +394,9 @@ var css2less = function (css, options) {
 					me.less.push(me.options.blockSeparator);
 				}
 
-				me.less.push(/*getIndent(indent),*/ i);
+				//Selector indent
+				if (indent > 0) me.less.push(getIndent(indent), i);
+				else me.less.push(/*getIndent(indent),*/ i);
 
 				if (me.options.blockFromNewLine) {
 					me.less.push("\n", getIndent(indent));
@@ -418,12 +420,13 @@ var css2less = function (css, options) {
 
 					if (children && children.length) {
 						me.less.push(me.options.blockSeparator);
-						me.less.push(getIndent(indent));
 					}
 				}
 
 				me.renderLess(element, indent + me.options.indentSize);
-				me.less.push(/*getIndent(indent),*/ "}\n");
+
+				if (indent > 0) me.less.push(getIndent(indent), "}\n");
+				else me.less.push(/*getIndent(indent),*/ "}\n");
 				
 				index++;
 			}
