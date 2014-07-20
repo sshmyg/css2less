@@ -84,7 +84,10 @@ var css2less = function (css, options) {
 		me.colors = {};
 		me.colors_index = 0;
 		me.vendorMixins = {};
-	}
+	},
+	isBase64 = function(str) {
+		return str.indexOf('base64') !== -1;
+	};
 
 	me.processLess = function () {
 		me.cleanup();
@@ -107,15 +110,15 @@ var css2less = function (css, options) {
 
 	me.convertRules = function (data) {
 		var arr = data.split(/[;]/gi).select("val=>val.trim()").where("val=>val"),
-			isBase64 = false;
+			base64Index = false;
 
 		arr.forEach(function(item, i) {
-			if (item.indexOf('base64') !== -1) isBase64 = i;
+			if ( isBase64(item) ) base64Index = i;
 		});
 		
-		if (isBase64) {
-			arr[isBase64 - 1] = arr[isBase64 - 1] + ';' + arr[isBase64];
-			arr.splice(isBase64, 1);
+		if (base64Index) {
+			arr[base64Index - 1] = arr[base64Index - 1] + ';' + arr[base64Index];
+			arr.splice(base64Index, 1);
 		}
 		
 		return arr;
@@ -179,7 +182,11 @@ var css2less = function (css, options) {
 
 		for (var i = 0; i < rules.length; i++) {
 			var e = rules[i].trim();
+			
 			var parts = e.split(/[:]/gi);
+
+			if ( isBase64(e) ) parts = [parts[0], parts[1] + parts[2]];
+
 			var key = parts[0].trim();
 			var value = parts[1].trim();
 
