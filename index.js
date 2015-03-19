@@ -387,6 +387,9 @@ var css2less = function (css, options) {
 		var index = 0;
 
 		for (var i in tree) {
+			if (i == "/**") {
+				continue;
+			}
 			if (i == "children") {
 				continue;
 			}
