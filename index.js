@@ -1,476 +1,338 @@
-Array.lambda = function (s) {
-	if (typeof s !== "string") {
-		return s;
-	}
+'use strict';
 
-	s = s.replace("=>", "`return ") + ";";
-	s = s.split("`");
-	s = Function.apply(null, s);
+const _ = require('lodash');
+const cssc = require('./csscolors.json');
+const stream = require('stream');
 
-	return s;
-};
-Array.prototype.any = function (d) {
-	var result;
+const stringSplitAndTrim = (str, del) => _.compact(str.split(del).map((item) => item.trim()));
 
-	d = Array.lambda(d);
-
-	if (d) {
-		this.forEach(function (it) {
-			if (d(it)) {
-				result = it;
-				return { stop: true };
-			}
-		});
-	} else {
-		result = this[0];
-	}
-
-	return result ? true : false;
-}
-Array.prototype.select = function (d) {
-	var result = [];
-
-	d = Array.lambda(d);
-
-	this.forEach(function (it, i) {
-		result.push(d(it, i));
-	});
-
-	return result;
-};
-Array.prototype.where = function (d) {
-	var result = [];
-
-	d = Array.lambda(d);
-
-	this.forEach(function (it, i) {
-		if (d(it, i)) {
-			result.push(it);
-		}
-	});
-
-	return result;
-};
-
-var css2less = function (css, options) {
-	var me = this;
-
-	var ctor = function () {
-		me.css = css || "";
-		me.options = {
-			cssColors: ["aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige", "bisque", "black", "blanchedalmond", "blue", "blueviolet", "brown", "burlywood", "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue", "cornsilk", "crimson", "cyan", "darkblue", "darkcyan", "darkgoldenrod", "darkgray", "darkgrey", "darkgreen", "darkkhaki", "darkmagenta", "darkolivegreen", "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen", "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise", "darkviolet", "deeppink", "deepskyblue", "dimgray", "dimgrey", "dodgerblue", "firebrick", "floralwhite", "forestgreen", "fuchsia", "gainsboro", "ghostwhite", "gold", "goldenrod", "gray", "grey", "green", "greenyellow", "honeydew", "hotpink", "indianred", "indigo", "ivory", "khaki", "lavender", "lavenderblush", "lawngreen", "lemonchiffon", "lightblue", "lightcoral", "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgrey", "lightgreen", "lightpink", "lightsalmon", "lightseagreen", "lightskyblue", "lightslategray", "lightslategrey", "lightsteelblue", "lightyellow", "lime", "limegreen", "linen", "magenta", "maroon", "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple", "mediumseagreen", "mediumslateblue", "mediumspringgreen", "mediumturquoise", "mediumvioletred", "midnightblue", "mintcream", "mistyrose", "moccasin", "navajowhite", "navy", "oldlace", "olive", "olivedrab", "orange", "orangered", "orchid", "palegoldenrod", "palegreen", "paleturquoise", "palevioletred", "papayawhip", "peachpuff", "peru", "pink", "plum", "powderblue", "purple", "red", "rosybrown", "royalblue", "saddlebrown", "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue", "slateblue", "slategray", "slategrey", "snow", "springgreen", "steelblue", "tan", "teal", "thistle", "tomato", "turquoise", "violet", "wheat", "white", "whitesmoke", "yellow", "yellowgreen"],
-			vendorPrefixesList: ["-moz", "-o", "-ms", "-webkit"],
-			//vendorPrefixesReg: /^(-moz|-o|-ms|-webkit)-/gi,
-			indentSymbol: "\t",
+//-----------------------------------------------------------------------------
+class css2less extends stream.Transform {
+	constructor (options) {
+		this.options = _.defaults({}, options || {}, {
+			encoding: 'utf8',
+			vendorPrefixesList: ['moz', 'o', 'ms', 'webkit'],
+			indentSymbol: '\t',
 			indentSize: 1,
-			selectorSeparator: ",\n",
+			selectorSeparator: ',\n',
 			blockFromNewLine: false,
-			blockSeparator: "\n",
-			updateColors: false,
+			blockSeparator: '\n',
+			updateColors: true,
 			vendorMixins: true,
-			nameValueSeparator: ": "
-		};
-		var vendorPrefixesListStr = me.options.vendorPrefixesList.join('|');
+			nameValueSeparator: ': '
+		});
 
-		me.options.vendorPrefixesReg = new RegExp('^(' + vendorPrefixesListStr + ')-', 'gi');
+		super({ encoding: this.options.encoding });
 
-		for (var i in me.options) {
-			if (typeof options[i] === 'undefined') continue;
-			me.options[i] = options[i];
-		}
+		this.options.vendorPrefixesReg = new RegExp('^-(' +
+				this.options.vendorPrefixesList.join('|') + ')-', 'gi');
 
-		me.tree = {};
-		me.less = [];
-		me.colors = {};
-		me.colors_index = 0;
-		me.vendorMixins = {};
-	},
-	isBase64 = function(str) {
-		return str.indexOf('base64') !== -1;
-	};
-
-	me.processLess = function () {
-		me.cleanup();
-
-		if (!me.css) {
-			return false;
-		}
-
-		me.generateTree();
-		me.renderLess();
-		me.less = me.less.join("");
-
-		return true;
-	};
-
-	me.cleanup = function () {
-		me.tree = {};
-		me.less = [];
+		this.css = '';
+		this.tree = {};
+		this.less = [];
+		this.colors = {};
+		this.colors_index = 0;
+		this.vendorMixins = {};
 	}
 
-	me.convertRules = function (data) {
-		var arr = data.split(/[;]/gi).select("val=>val.trim()").where("val=>val"),
-			base64Index = false;
+	_transform (chunk, enc, done) {
+		this.css += chunk.toString(enc);
+		done();
+	}
 
-		arr.forEach(function(item, i) {
-			if ( isBase64(item) ) base64Index = i;
-		});
-		
-		if (base64Index) {
-			arr[base64Index - 1] = arr[base64Index - 1] + ';' + arr[base64Index];
-			arr.splice(base64Index, 1);
-		}
-		
-		return arr;
-	};
+	_flush (done) {
+		this.generateTree();
+		this.renderLess();
 
-	me.color = function (value) {
-		value = value.trim();
+		this.push(this.less.join(''));
+		done();
+	}
 
-		if (me.options.cssColors.indexOf(value) >= 0 || /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/gi.test(value) || /(rgba?)\(.*\)/gi.test(value)) {
-			return true;
-		}
-
-		return false;
-	};
-
-	me.convertIfColor = function (color) {
+//-----------------------------------------------------------------------------
+	convertIfColor (color) {
 		color = color.trim();
 
-		if (me.color(color)) {
-			if (!me.colors[color]) {
-				me.colors[color] = "@color" + me.colors_index;
-				me.colors_index++;
+		if (cssc.indexOf(color) >= 0 || /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/gi.test(color) || /(rgba?)\(.*\)/gi.test(color)) {
+			if (!this.colors[color]) {
+				this.colors[color] = '@color' + this.colors_index;
+				this.colors_index++;
 			}
 
-			return me.colors[color];
-		} 
+			return this.colors[color];
+		}
 
 		return color;
-	};
+	}
 
-	me.matchColor = function (style) {
-		var rules = me.convertRules(style);
-		var result = [];
+	matchColor (style) {
+		let rules = stringSplitAndTrim(style, /\;(?!base64)/gi);
+		let result = [];
 
 		rules.forEach(function (r, i) {
-			var parts = r.split(/[:]/gi);
-			var key = parts[0].trim();
-			var value = parts[1].trim();
-
-			result.push(i > 0 ? "\n" : "", key);
-
-			if (!value) {
+			let parts = r.split(/:/);
+			if (!(parts > 1 && parts[1].trim())) {
 				return;
 			}
 
-			var oldValues = value.split(/\s+/gi);
-			var newValues = oldValues.select(function (v) {
-				return me.convertIfColor(v);
-			});
+			let key = parts[0].trim();
+			let values = parts[1]
+				.trim()
+				.split(/\s+/gi)
+				.map((v) => this.convertIfColor(v));
 
-			result.push(me.options.nameValueSeparator, newValues.join(" "), ";");
+			result.push((i ? '\n' : '') + key,
+				this.options.nameValueSeparator,
+				values.join(' ') + ';');
 		});
 
-		return result.join("");
-	};
+		return result.join('');
+	}
 
-	me.matchVendorPrefixMixin = function (style) {
-		var normal_rules = {};
-		var prefixed_rules = {};
-		var rules = me.convertRules(style);
+	matchVendorPrefixMixin (style) {
+		let normal_rules = {};
+		let prefixed_rules = {};
+		let rules = stringSplitAndTrim(style, /\;(?!base64)/gi);
 
-		for (var i = 0; i < rules.length; i++) {
-			var e = rules[i].trim();
-			
-			var parts = e.split(/[:]/gi);
-
-			if ( isBase64(e) ) parts = [parts[0], parts[1] + parts[2]];
-
-			var key = parts[0].trim();
-			var value = parts[1].trim();
+		rules.forEach(function (rule) {
+			let [ key, value ] = stringSplitAndTrim(rule, /\:(?!image)/gi);
 
 			if (!value) {
-				normal_rules[key] = "";
-			} else if (me.options.vendorPrefixesReg.test(key)) {
-				var rule_key = key.replace(me.options.vendorPrefixesReg, "");
-				var values = value.split(/\s+/gi);
-				var newValue = [];
-
-				for (var j = 0; j < values.length; j++) {
-					newValue.push(values[j].trim());
-				}
-
-				newValue = newValue.join(" ");
+				normal_rules[key] = '';
+			}
+			else if (this.options.vendorPrefixesReg.test(key)) {
+				let rule_key = key.replace(this.options.vendorPrefixesReg, '');
+				let newValue = value.replace(/\s+/gi, ' ').trim();
 
 				if (prefixed_rules[rule_key] && prefixed_rules[rule_key] != newValue) {
 					return style;
 				}
 
 				prefixed_rules[rule_key] = newValue;
-			} else {
+			}
+			else {
 				normal_rules[key] = value;
 			}
-		}
+		});
 
-		for (var k in prefixed_rules) {
-			var v = prefixed_rules[k];
+		_.forOwn(prefixed_rules, function (value, k) {
+			let v = stringSplitAndTrim(value, /\s+/gi);
 
-			v = v.split(/\s+/gi).select("val=>val.trim()").where("val=>val");
-
-			if (!me.vendorMixins[k]) {
-				me.vendorMixins[k] = v.length;
-			}
+			if (!this.vendorMixins[k])
+				this.vendorMixins[k] = v.length;
 
 			if (normal_rules[k]) {
 				delete normal_rules[k];
-				normal_rules[".vp-" + k + "(" + v.join(", ") + ")"] = "";
+
+				let newKey = '.vp-' + k + '(' + v.join(', ') + ')';
+				normal_rules[newKey] = '';
 			}
-		}
+		});
 
-		var result = [];
-
-		for (var k in normal_rules) {
-			var v = normal_rules[k];
-			var r = [k];
-
-			if (v) {
-				r.push(me.options.nameValueSeparator, v, ";\n");
+		let result = [];
+		_.forOwn(prefixed_rules, function (v, k) {
+			let rule = k;
+			if (v.trim()) {
+				rule += this.options.nameValueSeparator + v + ';\n';
 			}
 
-			result.push(r.join(""));
-		}
+			result.push(rule);
+		});
 
-		return result.join("");
-	};
+		return result.join('');
+	}
 
-	me.addRule = function (tree, selectors, style) {
+	addRule (tree, selectors, style) {
 		if (!style) {
 			return;
 		}
 
 		if (!selectors || !selectors.length) {
-			if (me.options.updateColors) {
-				style = me.matchColor(style)
+			if (this.options.updateColors) {
+				style = this.matchColor(style);
+			}
+			if (this.options.vendorMixins) {
+				style = this.matchVendorPrefixMixin(style);
 			}
 
-			if (me.options.vendorMixins) {
-				style = me.matchVendorPrefixMixin(style);
-			}
+			tree.style = (tree.style || '') + style;
+		}
+		else {
+			let first = stringSplitAndTrim(selectors[0], /\s*[,]\s*/gi)
+							.join(this.options.selectorSeparator);
 
-			if (!tree.style) {
-				tree.style = style;
-			} else {
-				tree.style += style;
-			}
-		} else {
-			var first = selectors[0].split(/\s*[,]\s*/gi).select("val=>val.trim()").where("val=>val").join(me.options.selectorSeparator);
-			
 			if (!tree.children) {
 				tree.children = [];
 			}
 
-			if (!tree[first]) {
-				tree[first] = {};
+			let node = tree[first];
+			if (!node) {
+				node = tree[first] = {};
 			}
-
-			var node = tree[first];
 
 			selectors.splice(0, 1);
 			tree.children.push(node);
-			me.addRule(node, selectors, style);
+			this.addRule(node, selectors, style);
 		}
-	};
+	}
 
-	me.generateTree = function () {
-		var csss = me.css.split(/\n/gi);
-		var temp = csss.select("val=>val.trim()").where("val=>val");
+	generateTree (data) {
+		let temp = stringSplitAndTrim(data, /\n/g)
+					.join('')
+					.replace(/\/\*+[^\*]*\*+\//g, '')
+					.replace(/[^\{\}]+\{\s*\}/g, ' ');
 
-		temp = temp.join("");
-		temp = temp.replace(/[/][*]+[^\*]*[*]+[/]/gi, "");
-		temp = temp.replace(/[^{}]+[{]\s*[}]/ig, " ");
-		temp = temp.split(/[{}]/gi).where("val=>val");
+		temp = stringSplitAndTrim(temp, /[\{\}]/g);
 
-		var styles = [];
-
-		for (var i = 0; i < temp.length; i++) {
-			if (i % 2 === 0) {
-				styles.push([temp[i]]);
-			} else {
-				styles[styles.length - 1].push(temp[i]);
+		let styles = [];
+		temp.forEach(function (val, i) {
+			if (!(i & 1)) {
+				styles.push(val);
 			}
-		}
-
-		for (var i = 0; i < styles.length; i++) {
-			var style = styles[i];
-			var rules = style[0];
-
-			if (rules.indexOf(">") >= 0) {
-				rules = rules.replace(/\s*>\s*/gi, " &>");
+			else {
+				styles[styles.length - 1].push(val);
 			}
+		});
 
-			if (rules.indexOf("@import") >= 0) {
-				var import_rule = rules.match(/@import.*;/gi)[0];
-				rules = rules.replace(/@import.*;/gi, "");
-				me.addRule(me.tree, [], import_rule);
+		styles.forEach(function (style) {
+			let rule = style[0].replace(/\s*>\s*/gi, ' &>');
+
+			if (~rule.indexOf('@import')) {
+				let import_rule = rule.match(/@import.*;/gi)[0];
+				rule = rule.replace(/@import.*;/gi, '');
+				this.addRule(this.tree, [], import_rule);
 			}
 
-			if (rules.indexOf(",") >= 0) {
-				me.addRule(me.tree, [rules], style[1]);
-			} else {
-				var rules_split = rules.replace(/[:]/gi, " &:").split(/\s+/gi).select("val=>val.trim()").where("val=>val").select(function (it, i) {
-					return it.replace(/[&][>]/gi, "& > ");
+			if (~rule.indexOf(',')) {
+				this.addRule(this.tree, [rule], style[1]);
+			}
+			else {
+				let rules_split = stringSplitAndTrim(rule.replace(/[:]/gi, ' &:'), /\s+/gi).map(function (it) {
+					return it.replace(/[&][>]/gi, '& > ');
 				});
 
-				me.addRule(me.tree, rules_split, style[1]);
+				this.addRule(this.tree, rules_split, style[1]);
 			}
-		}
-	};
+		});
+	}
 
-	me.buildMixinList = function (indent) {
-		var less = [];
+	buildMixinList (indent) {
+		let less = [];
 
-		for (var k in me.vendorMixins) {
-			var v = me.vendorMixins[k];
-			var args = [];
+		_.forOwn(this.vendorMixins, function (v, k) {
+			let args = [];
 
-			for (var i = 0; i < v; i++) {
-				args.push("@p" + i);
-			}
-
-			less.push(".vp-", k, "(", args.join(", "), ")");
-
-			if (me.options.blockFromNewLine) {
-				less.push("\n");
-			} else {
-				less.push(" ");
+			for (let i = 0; i < v; i++) {
+				args.push('@p' + i);
 			}
 
-			less.push("{\n");
+			less.push('.vp-', k, '(', args.join(', '), ')');
+			less.push(this.options.blockFromNewLine ? '\n' : ' ');
 
-			me.options.vendorPrefixesList.forEach(function (vp, i) {
-				less.push(getIndent(indent + me.options.indentSize));
-				less.push(vp, "-", k, me.options.nameValueSeparator, args.join(" "), ";\n");
+			less.push('{\n');
+			this.options.vendorPrefixesList.forEach(function (vp, i) {
+				less.push(this.getIndent(indent + this.options.indentSize));
+				less.push('-', vp, '-', k, this.options.nameValueSeparator, args.join(' '), ';\n');
 			});
+			less.push(this.getIndent(indent + this.options.indentSize), k, this.options.nameValueSeparator, args.join(' '), ';\n');
+			less.push('}\n');
+		});
 
-			less.push(getIndent(indent + me.options.indentSize), k, me.options.nameValueSeparator, args.join(" "), ";\n");
-			less.push(/*getIndent(indent), */"}\n");
+		if (less.length) {
+			less.push('\n');
 		}
 
-		if (less.any()) {
-			less.push("\n");
-		}
-
-		return less.join("");
+		return less.join('');
 	};
 
-	me.renderLess = function (tree, indent) {
+	renderLess (tree, indent) {
 		indent = indent || 0;
 
 		if (!tree) {
-			for (var k in me.colors) {
-				var v = me.colors[k];
-				me.less.push(v, me.options.nameValueSeparator, k, ";\n");
+			for (let k in this.colors) {
+				let v = this.colors[k];
+				this.less.push(v, this.options.nameValueSeparator, k, ';\n');
 			}
 
-			if (me.colors_index > 0) {
-				me.less.push("\n");
+			if (this.colors_index > 0) {
+				this.less.push('\n');
 			}
 
-			if (me.options.vendorMixins) {
-				me.less.push(me.buildMixinList(indent));
+			if (this.options.vendorMixins) {
+				this.less.push(this.buildMixinList(indent));
 			}
 
-			tree = me.tree;
+			tree = this.tree;
 		}
 
-		var index = 0;
+		let index = 0;
 
-		for (var i in tree) {
-			if (i == "children") {
+		for (let i in tree) {
+			if (i == 'children') {
 				continue;
 			}
 
-			var element = tree[i];
-			var children = element.children;
+			let element = tree[i];
+			let children = element.children;
 
-			if (i == "style") {
-				me.less.push(me.convertRules(element).join(";\n"), "\n");
-			} else {
+			if (i == 'style') {
+				let rules = stringSplitAndTrim(element, /\;(?!base64)/gi);
+				this.less.push(rules.join(';\n'), '\n');
+			}
+			else {
 				if (index > 0) {
-					me.less.push(me.options.blockSeparator);
+					this.less.push(this.options.blockSeparator);
 				}
 
-				//Selector indent
-				if (indent > 0) me.less.push(getIndent(indent), i);
-				else me.less.push(/*getIndent(indent),*/ i);
+				if (indent > 0) {
+					this.less.push(this.getIndent(indent));
+				}
+				this.less.push(i);
 
-				if (me.options.blockFromNewLine) {
-					me.less.push("\n", getIndent(indent));
-				} else {
-					me.less.push(" ");
+				if (this.options.blockFromNewLine) {
+					this.less.push('\n' + this.getIndent(indent));
+				}
+				else {
+					this.less.push(' ');
 				}
 
-				me.less.push("{\n");
+				this.less.push('{\n');
 
-				var style = element.style;
+				let style = element.style;
 				delete element.style;
 
 				if (style) {
-					var temp = me.convertRules(style);
+					let temp = stringSplitAndTrim(style, /\;(?!base64)/gi);
+					let indented = temp.map(it => this.getIndent(indent + this.options.indentSize) + it + ';').join('\n');
 
-					temp = temp.select(function (it, i) {
-						return getIndent(indent + me.options.indentSize) + it + ";";
-					});
-
-					me.less.push(temp.join("\n"), "\n");
+					this.less.push(indented, '\n');
 
 					if (children && children.length) {
-						me.less.push(me.options.blockSeparator);
+						this.less.push(this.options.blockSeparator);
 					}
 				}
 
-				me.renderLess(element, indent + me.options.indentSize);
+				this.renderLess(element, indent + this.options.indentSize);
 
-				if (indent > 0) me.less.push(getIndent(indent), "}\n");
-				else me.less.push(/*getIndent(indent),*/ "}\n");
-				
+				if (indent > 0) {
+					this.less.push(this.getIndent(indent));
+				}
+				this.less.push('}\n');
+
 				index++;
 			}
 		}
-	};
+	}
 
-	function getIndent(size) {
-		size = size || me.options.indentSize;
+	getIndent (size) {
+		let result = '';
+		let max = size || this.options.indentSize;
 
-		var result = '',
-			indent;
-
-		var max = size,
-			n = 0;
-		for (; n < max; n++) {
-			result += me.options.indentSymbol;
+		for (let n = 0; n < max; n++) {
+			result += this.options.indentSymbol;
 		}
 
 		return result;
-		/*return (new Array(size)).select(function (it, i) {
-			return me.options.indentSymbol;
-		}).join("");*/
 	}
-
-	ctor();
 };
-
-
-module.exports = function(cssString, options) {
-	if (!cssString) {
-		console.log('cssString require');
-		return false;
-	}
-
-	var lessInst = new css2less(cssString, options || {});
-
-	lessInst.processLess();
-
-	return lessInst.less;
-};
+//-----------------------------------------------------------------------------
+module.exports = css2less;

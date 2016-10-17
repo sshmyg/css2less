@@ -1,24 +1,29 @@
 {
   "name": "css2less",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "Convert css to less",
-  "homepage": "https://github.com/serheyShmyg/css2less",
-  "author": {
+  "homepage": "https://github.com/mborik/css2less",
+  "authors": {
     "name": "Serhey Shmyg",
     "email": "serhey.shmyg.all@gmail.com"
   },
-   "repository": {
+  "contributors": [{
+    "name": "Martin Bórik",
+    "email": "mborik@users.sourceforge.net"
+  }],
+  "repository": {
     "type": "git",
-    "url": "https://github.com/serheyShmyg/css2less.git"
+    "url": "https://github.com/mborik/css2less.git"
   },
   "bugs": {
-    "url": "https://github.com/serheyShmyg/css2less/issues"
+    "url": "https://github.com/mborik/css2less/issues"
   },
   "main": "index.js",
   "scripts": {
-    "start" : "gulp",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "exit 1"
   },
   "license": "ISC",
-  "dependencies": {}
+  "dependencies": {
+    "lodash": "^4.16.2"
+  }
 }
