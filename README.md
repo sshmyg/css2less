@@ -1,60 +1,51 @@
-#CSS to LESS
+# CSS to LESS
 Convert css to less
 
 ```shell
-npm install css2less --save-dev
+npm install -g css2less
 ```
 
-###Options:
-#### options.indentSize
-Type: `Number`  
-Default value: `1`  
+## Usage:
+>+ `$ css2less [options] <input.css...>`
+
+### CLI Options ###
+#### --indentSize
+Type: `number`
+Default value: `1`
 Desc: Indent size.
 
-#### options.vendorPrefixesList
-Type: `Array`  
-Default value: `["-moz", "-o", "-ms", "-webkit"]`  
-Desc: List of vendor prefixes.
-
-#### options.indentSymbol
-Type: `String`  
-Default value: `\t`  
+#### --indentSymbol
+Type: `string`
+Default value: `\t`
 Desc: Indent symbol.
 
-#### options.selectorSeparator
-Type: `String`  
-Default value: `,\n`  
+#### --selectorSeparator
+Type: `string`
+Default value: `,\n`
 Desc: Selector separator.
 
-#### options.blockFromNewLine
-Type: `Bolean`  
-Default value: `false`  
-Desc: Start first '{' from the new line
-
-#### options.blockSeparator
-Type: `String`  
-Default value: `\n`  
+#### --blockSeparator
+Type: `string`
+Default value: `\n`
 Desc: Separator between blocks.
 
-#### options.updateColors
-Type: `Bolean`  
-Default value: `false`  
+#### --blockFromNewLine
+Type: `boolean`
+Default value: `false`
+Desc: Start first '{' from the new line
+
+#### --updateColors
+Type: `boolean`
+Default value: `true`
 Desc: Use variables for colors.
 
-#### options.vendorMixins
-Type: `Boolean`  
-Default value: `true`  
+#### --vendorMixins
+Type: `boolean`
+Default value: `true`
 Desc: Create function for vendor styles.
 
-##Example
+## Pure JavaScript usage example:
 ```javascript
-var css2less = require('css2less'),
-	cssString = 'a {color:green; text-decoration:none; } a:hover {color:lime; } a:active {text-decoration:underline; }',
-	options = {},
-	result;
-
-result = css2less(cssString, options);
-console.log(result);
+var css2less = require('css2less');
+var lessResult = css2less(inputCSSInString, options);
 ```
-
-<!-- Author [css2less](http://www.miyconst.com/Blog/View/14/conver-css-to-less-with-css2less-js) -->

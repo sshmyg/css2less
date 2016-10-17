@@ -19,11 +19,15 @@
     "url": "https://github.com/mborik/css2less/issues"
   },
   "main": "index.js",
+  "bin": {
+    "css2less": "./cli.js"
+  },
   "scripts": {
     "test": "exit 1"
   },
   "license": "ISC",
   "dependencies": {
-    "lodash": "^4.16.2"
+    "lodash": "^4.16.2",
+    "meow": "^3.7.0"
   }
 }
