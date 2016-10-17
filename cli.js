@@ -26,6 +26,11 @@ let cli = meow(`
 `, {
 	string:  [ 'indentSymbol', 'selectorSeparator', 'blockSeparator' ],
 	boolean: [ 'updateColors', 'vendorMixins' ],
+	default: {
+		updateColors: true,
+		vendorMixins: true
+	},
+	stopEarly: true,
 	alias: {
 		h: 'help',
 		v: 'version'
@@ -40,8 +45,9 @@ cli.input.forEach(function (file) {
 	let filePath = path.resolve(cwd, file);
 
 	try {
-		if (!fs.statSync(filePath).isFile())
+		if (!fs.statSync(filePath).isFile()) {
 			throw new Error("ENOTFILE");
+		}
 	}
 	catch (err) {
 		console.error('Invalid file: "%s" (%s)', filePath,
@@ -50,8 +56,10 @@ cli.input.forEach(function (file) {
 	}
 
 	let ext = path.extname(file);
-	if (ext.toLowerCase() !== '.css')
+	if (ext.toLowerCase() !== '.css') {
 		console.warn("%s hasn't proper extension, you've been warned!", file);
+		return;
+	}
 
 	let lessFile = path.join(
 		path.dirname(filePath),
@@ -59,6 +67,6 @@ cli.input.forEach(function (file) {
 	);
 
 	fs.createReadStream(filePath)
-		.pipe(css2less(cli.flags))
+		.pipe(new css2less(cli.flags))
 		.pipe(fs.createWriteStream(lessFile));
 });
