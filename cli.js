@@ -28,7 +28,7 @@ let cli = meow(`
 	boolean: [ 'updateColors', 'vendorMixins' ],
 	default: {
 		updateColors: true,
-		vendorMixins: true
+		vendorMixins: false
 	},
 	stopEarly: true,
 	alias: {
@@ -61,10 +61,16 @@ cli.input.forEach(function (file) {
 		return;
 	}
 
-	let lessFile = path.join(
-		path.dirname(filePath),
-		path.basename(file, ext) + '.less'
-	);
+	let fileDir = path.dirname(filePath);
+	let fileBaseName = path.basename(file, ext);
+	let lessFile = path.join(fileDir, fileBaseName + '.less');
+
+	// linton specific path rule
+	let lintonCssPathRule = fileDir.indexOf('linton' + path.sep + 'css');
+	if (~lintonCssPathRule)
+		fileDir = fileDir.substr(lintonCssPathRule + 11);
+
+	cli.flags.filePathway = fileDir.split(path.sep).concat(fileBaseName);
 
 	fs.createReadStream(filePath)
 		.pipe(new css2less(cli.flags))

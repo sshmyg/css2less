@@ -10,6 +10,7 @@ const stringSplitAndTrim = (str, del) => _.compact(str.split(del).map((item) => 
 class css2less extends stream.Transform {
 	constructor (options) {
 		options = _.defaults({}, options, {
+			filePathway: [],
 			encoding: 'utf8',
 			vendorPrefixesList: ['moz', 'o', 'ms', 'webkit'],
 			indentSymbol: '\t',
@@ -18,7 +19,7 @@ class css2less extends stream.Transform {
 			blockFromNewLine: false,
 			blockSeparator: '\n',
 			updateColors: true,
-			vendorMixins: true,
+			vendorMixins: false,
 			nameValueSeparator: ': '
 		});
 
@@ -66,7 +67,7 @@ class css2less extends stream.Transform {
 			/(rgba?)\(.*\)/gi.test(value)) {
 
 			if (!this.colors[value]) {
-				this.colors[value] = '@color' + this.colors_index;
+				this.colors[value] = '@cl-' + this.options.filePathway.concat(this.colors_index).join('-');
 				this.colors_index++;
 			}
 
