@@ -1,5 +1,3 @@
-'use strict';
-
 const _ = require('lodash');
 const cssc = require('./csscolors.json');
 const stream = require('stream');
@@ -67,10 +65,21 @@ class css2less extends stream.Transform {
 	}
 
 	convertIfVariable (value) {
-		if (cssc.indexOf(value) < 0 && (
-			/^#([0-9a-f]{6}|[0-9a-f]{3})$/i.test(value) ||
-			/^url\(([\"'])((?:\\\1|.)+?)\1\)$/i.test(value) ||
-			this.rgbaMatchReg.test(value))) {
+		if (/(^@var)|(^\d+(\.\d+)?(%|p[ctx]|e[mx]|[cm]m|in)?$)/i.test(value)) {
+			return value;
+		}
+
+		// find the named value or convert hex triplet e.g. #639 to full hex color...
+		value = _.get(cssc, value.toLowerCase()) || value.replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, '#$1$1$2$2$3$3');
+
+		let isColor = false;
+		if (/^#[0-9a-f]{6}$/i.test(value)) {
+			isColor = true;
+			value = value.toLowerCase();
+		}
+
+		if (isColor || this.rgbaMatchReg.test(value) ||
+			/^url\(([\"'])((?:\\\1|.)+?)\1\)$/i.test(value)) {
 
 			if (!this.vars[value]) {
 				this.vars[value] = '@var-' + this.options.filePathway.concat(this.vars_index).join('-');

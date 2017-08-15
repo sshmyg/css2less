@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-'use strict';
 
 const appname = 'css2less';
 
