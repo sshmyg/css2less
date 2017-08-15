@@ -3,6 +3,8 @@
 const _ = require('lodash');
 const cssc = require('./csscolors.json');
 const stream = require('stream');
+const path = require('path');
+const fs = require('fs');
 
 const stringSplitAndTrim = (str, del) => _.compact(str.split(del).map((item) => item.trim()));
 
@@ -25,14 +27,17 @@ class css2less extends stream.Transform {
 
 		super({ encoding: options.encoding });
 
-		options.vendorPrefixesReg = new RegExp('^-(' + options.vendorPrefixesList.join('|') + ')-', 'gi');
 		this.options = options;
+
+		this.vendorPrefixesReg = new RegExp('^-(' + options.vendorPrefixesList.join('|') + ')-', 'gi');
+		this.rgbaMatchReg = /(((0|\d{1,}px)\s+?){3})?rgba?\((\d{1,3},\s*?){2}\d{1,3}(,\s*?0?\.\d+?)?\)$/gi;
+		this.commentMatchReg = /\/\*(?:[^*]|[\r\n]|(\*+([^*/]|[\r\n])))*\*+\//g;
 
 		this.css = '';
 		this.tree = {};
 		this.less = [];
-		this.colors = {};
-		this.colors_index = 0;
+		this.vars = {};
+		this.vars_index = 0;
 		this.vendorMixins = {};
 	}
 
@@ -61,34 +66,35 @@ class css2less extends stream.Transform {
 		return result;
 	}
 
-	convertIfColor (value) {
-		if (cssc.indexOf(value) >= 0 ||
-			/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/gi.test(value) ||
-			/(rgba?)\(.*\)/gi.test(value)) {
+	convertIfVariable (value) {
+		if (cssc.indexOf(value) < 0 && (
+			/^#([0-9a-f]{6}|[0-9a-f]{3})$/i.test(value) ||
+			/^url\(([\"'])((?:\\\1|.)+?)\1\)$/i.test(value) ||
+			this.rgbaMatchReg.test(value))) {
 
-			if (!this.colors[value]) {
-				this.colors[value] = '@cl-' + this.options.filePathway.concat(this.colors_index).join('-');
-				this.colors_index++;
+			if (!this.vars[value]) {
+				this.vars[value] = '@var-' + this.options.filePathway.concat(this.vars_index).join('-');
+				this.vars_index++;
 			}
 
-			return this.colors[value];
+			return this.vars[value];
 		}
 
 		return value;
 	}
 
-	matchColor (style) {
+	matchVariable (style) {
 		let rules = stringSplitAndTrim(style, /\;(?!base64)/gi);
 		let result = [];
 
-		rules.forEach(function (rule, i) {
+		rules.forEach((rule, i) => {
 			let [ key, value ] = stringSplitAndTrim(rule, /\:(?!image)/gi);
 			if (!value) {
 				return;
 			}
 
-			let values = value.split(/\s+/gi)
-				.map((v) => this.convertIfColor(v));
+			value = value.replace(this.rgbaMatchReg, match => this.convertIfVariable(match));
+			let values = value.split(/\s+/gi).map(v => this.convertIfVariable(v));
 
 			result.push((i ? '\n' : '') + key,
 				this.options.nameValueSeparator,
@@ -103,14 +109,14 @@ class css2less extends stream.Transform {
 		let prefixed_rules = {};
 		let rules = stringSplitAndTrim(style, /\;(?!base64)/gi);
 
-		rules.forEach(function (rule) {
+		rules.forEach(rule => {
 			let [ key, value ] = stringSplitAndTrim(rule, /\:(?!image)/gi);
 
 			if (!value) {
 				normal_rules[key] = '';
 			}
-			else if (this.options.vendorPrefixesReg.test(key)) {
-				let rule_key = key.replace(this.options.vendorPrefixesReg, '');
+			else if (this.vendorPrefixesReg.test(key)) {
+				let rule_key = key.replace(this.vendorPrefixesReg, '');
 				let newValue = value.replace(/\s+/gi, ' ').trim();
 
 				if (prefixed_rules[rule_key] && prefixed_rules[rule_key] != newValue) {
@@ -124,7 +130,7 @@ class css2less extends stream.Transform {
 			}
 		}, this);
 
-		_.forOwn(prefixed_rules, (function (value, k) {
+		_.forOwn(prefixed_rules, (value, k) => {
 			let v = stringSplitAndTrim(value, /\s+/gi);
 
 			if (!this.vendorMixins[k])
@@ -133,18 +139,18 @@ class css2less extends stream.Transform {
 			if (normal_rules[k]) {
 				delete normal_rules[k];
 
-				let newKey = '.vp-' + k + '(' + v.join(', ') + ')';
+				let newKey = `.vp-${k}(${v.join(', ')})`;
 				normal_rules[newKey] = '';
 			}
-		}).bind(this));
+		});
 
 		let result = [];
-		_.forOwn(normal_rules, (function (value, rule) {
+		_.forOwn(normal_rules, (value, rule) => {
 			if (value.trim()) {
 				rule += this.options.nameValueSeparator + value + ';\n';
 			}
 			result.push(rule);
-		}).bind(this));
+		});
 
 		return result.join('');
 	}
@@ -156,7 +162,7 @@ class css2less extends stream.Transform {
 
 		if (!selectors || !selectors.length) {
 			if (this.options.updateColors) {
-				style = this.matchColor(style);
+				style = this.matchVariable(style);
 			}
 			if (this.options.vendorMixins) {
 				style = this.matchVendorPrefixMixin(style);
@@ -166,7 +172,7 @@ class css2less extends stream.Transform {
 		}
 		else {
 			let first = stringSplitAndTrim(selectors[0], /\s*[,]\s*/gi)
-							.join(this.options.selectorSeparator);
+									.join(this.options.selectorSeparator);
 
 			if (!tree.children) {
 				tree.children = [];
@@ -184,15 +190,26 @@ class css2less extends stream.Transform {
 	}
 
 	generateTree () {
+		let introCommentMatch = this.commentMatchReg.exec(this.css.trim());
+		if (introCommentMatch && introCommentMatch.index === 0) {
+			this.introComment = introCommentMatch[0];
+		}
+
+		let searchImportFn = (match, q, path) => {
+			this.less.push(`@import "${path}";\n`);
+			return '';
+		};
+
 		let temp = stringSplitAndTrim(this.css, /\n/g)
 					.join('')
-					.replace(/\/\*+[^\*]*\*+\//g, '')
+					.replace(this.commentMatchReg, '')
+					.replace(/@import\s+(?:url\()?([\"'])((?:\\\1|.)+?)\1[^;]*?;/gi, searchImportFn)
 					.replace(/[^\{\}]+\{\s*\}/g, ' ');
 
 		let styles = stringSplitAndTrim(temp, /[\{\}]/g);
 		let styleDefs = [];
 
-		styles.forEach(function (val, i) {
+		styles.forEach((val, i) => {
 			if (!(i & 1)) {
 				styleDefs.push([val]);
 			}
@@ -201,22 +218,15 @@ class css2less extends stream.Transform {
 			}
 		});
 
-		styleDefs.forEach(function (style) {
+		styleDefs.forEach(style => {
 			let rule = style[0].replace(/\s*>\s*/gi, ' &>');
-
-			if (~rule.indexOf('@import')) {
-				let import_rule = rule.match(/@import.*;/gi)[0];
-				rule = rule.replace(/@import.*;/gi, '');
-				this.addRule(this.tree, [], import_rule);
-			}
 
 			if (~rule.indexOf(',')) {
 				this.addRule(this.tree, [rule], style[1]);
 			}
 			else {
-				let rules_split = stringSplitAndTrim(rule.replace(/[:]/gi, ' &:'), /\s+/gi).map(function (it) {
-					return it.replace(/[&][>]/gi, '& > ');
-				});
+				let rules_split = stringSplitAndTrim(rule.replace(/:(?!:?\-)/gi, ' &:'), /\s+/gi)
+											.map(it => it.replace(/&>/gi, '& > '));
 
 				this.addRule(this.tree, rules_split, style[1]);
 			}
@@ -226,25 +236,26 @@ class css2less extends stream.Transform {
 	buildMixinList (indent) {
 		let less = [];
 
-		_.forOwn(this.vendorMixins, (function (v, k) {
+		_.forOwn(this.vendorMixins, (v, k) => {
 			let args = [];
 
 			for (let i = 0; i < v; i++) {
 				args.push('@p' + i);
 			}
 
-			less.push('.vp-', k, '(', args.join(', '), ')');
+			less.push(`.vp-${k}(${args.join(', ')})`);
 			less.push(this.options.blockFromNewLine ? '\n' : ' ');
 
 			less.push('{\n');
-			this.options.vendorPrefixesList.forEach(function (vp, i) {
+			this.options.vendorPrefixesList.forEach((vp, i) => {
 				less.push(this.getIndent(indent + this.options.indentSize));
-				less.push('-', vp, '-', k, this.options.nameValueSeparator, args.join(' '), ';\n');
+				less.push(`-${vp}-${k}${this.options.nameValueSeparator}${args.join(' ')};\n`);
 			}, this);
 
-			less.push(this.getIndent(indent + this.options.indentSize), k, this.options.nameValueSeparator, args.join(' '), ';\n');
+			less.push(this.getIndent(indent + this.options.indentSize));
+			less.push(`${k}${this.options.nameValueSeparator}${args.join(' ')};\n`);
 			less.push('}\n');
-		}).bind(this));
+		});
 
 		if (less.length) {
 			less.push('\n');
@@ -257,14 +268,28 @@ class css2less extends stream.Transform {
 		indent = indent || 0;
 
 		if (!tree) {
-			_.forOwn(this.colors, (function (v, k) {
-				this.less.push(v, this.options.nameValueSeparator, k, ';\n');
-			}).bind(this));
+			let colorVariables = [];
+			_.forOwn(this.vars, (v, k) => {
+				colorVariables.push(`${v}${this.options.nameValueSeparator}${k};\n`);
+			});
 
-			if (this.colors_index > 0) {
-				this.less.push('\n');
+			if (this.options.variablesPath) {
+				fs.appendFile(this.options.variablesPath, colorVariables.join('') + '\n', ()=>{});
+				if (this.vars_index > 0) {
+					this.less.unshift(`@import (reference) "${path.basename(this.options.variablesPath)}";\n\n`);
+					this.less.push('\n');
+				}
+			}
+			else {
+				this.less.push.apply(this.less, colorVariables);
+				if (this.vars_index > 0) {
+					this.less.push('\n');
+				}
 			}
 
+			if (this.introComment) {
+				this.less.unshift(this.introComment + '\n\n');
+			}
 			if (this.options.vendorMixins) {
 				this.less.push(this.buildMixinList(indent));
 			}

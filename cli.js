@@ -13,25 +13,30 @@ let cli = meow(`
 		$ ${appname} [options] <input.css...>
 
 	Options:
-		--indentSize         Indent size (default 1)
-		--indentSymbol       Indentation symbol (default: tab character)
-		--selectorSeparator  String separator between selectors (default: comma and newline)
-		--blockSeparator     Separator between blocks (default: newline character)
-		--blockFromNewLine   Start first '{' from the newline after selector.
-		--updateColors       Create variables for colors.
-		--vendorMixins       Create function for vendor styles.
+		--indent-size           Indent size (default 1)
+		--indent-symbol         Indentation symbol (default: tab character)
+		--selector-separator    String separator between selectors (default: comma and newline)
+		--block-separator       Separator between blocks (default: newline character)
+		--block-on-newline      Start first '{' from the newline after selector.
+		--update-colors         Create variables for colors.
+		--vendor-mixins         Create function for vendor styles.
+		-var, --variables-path  Path to 'variables.less' file where will be all colors stored.
+							    Defaultly was colors stored on the top of each file, but with
+							    this given path will be generated with name prepended by
+							    relative path where 'variables.less' was stored.
 
-		-h, --help           Show help
-		-v, --version        Version number
+		-h, --help              Show help
+		-v, --version           Version number
 `, {
-	string:  [ 'indentSymbol', 'selectorSeparator', 'blockSeparator' ],
-	boolean: [ 'updateColors', 'vendorMixins' ],
+	string:  [ 'variables-path', 'indent-symbol', 'selector-separator', 'block-separator' ],
+	boolean: [ 'update-colors', 'vendor-mixins' ],
 	default: {
 		updateColors: true,
 		vendorMixins: false
 	},
 	stopEarly: true,
 	alias: {
+		var: 'variables-path',
 		h: 'help',
 		v: 'version'
 	}
@@ -65,12 +70,16 @@ cli.input.forEach(function (file) {
 	let fileBaseName = path.basename(file, ext);
 	let lessFile = path.join(fileDir, fileBaseName + '.less');
 
-	// linton specific path rule
-	let lintonCssPathRule = fileDir.indexOf('linton' + path.sep + 'css');
-	if (~lintonCssPathRule)
-		fileDir = fileDir.substr(lintonCssPathRule + 11);
+	if (cli.flags.variablesPath) {
+		let varDir = path.dirname(cli.flags.variablesPath);
+		let varRelPath = path.relative(varDir, fileDir);
 
-	cli.flags.filePathway = fileDir.split(path.sep).concat(fileBaseName);
+		cli.flags.filePathway = [];
+		if (varRelPath.length > 0) {
+			cli.flags.filePathway = varRelPath.split(path.sep);
+		}
+		cli.flags.filePathway.push(fileBaseName);
+	}
 
 	fs.createReadStream(filePath)
 		.pipe(new css2less(cli.flags))
