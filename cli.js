@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+/**
+ * css2less - entry point - command line interface
+ *
+ * Converter of pure CSS into the structured LESS keeping all the imports & comments
+ * and optionally extracting all the colors into variables.
+ * Original code by Serhey Shmyg, continued and extended by Martin Bórik.
+ */
 
 const appname = 'css2less';
 

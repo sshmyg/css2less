@@ -1,10 +1,19 @@
+/**
+ * css2less - main code of the converter implemented into transform stream
+ *
+ * Converter of pure CSS into the structured LESS keeping all the imports & comments
+ * and optionally extracting all the colors into variables.
+ * Original code by Serhey Shmyg, continued and extended by Martin Bórik.
+ */
+
 const _ = require('lodash');
-const cssc = require('./csscolors.json');
 const stream = require('stream');
 const path = require('path');
 const fs = require('fs');
 
-const stringSplitAndTrim = (str, del) => _.compact(str.split(del).map((item) => item.trim()));
+const cssc = require('./csscolors.json');
+const cssp = require('./cssprops.json');
+const { stringSplitAndTrim, repeatReplaceUntil } = require('./utils');
 
 //-----------------------------------------------------------------------------
 class css2less extends stream.Transform {
@@ -29,7 +38,6 @@ class css2less extends stream.Transform {
 
 		this.vendorPrefixesReg = new RegExp('^-(' + options.vendorPrefixesList.join('|') + ')-', 'gi');
 		this.rgbaMatchReg = /(((0|\d{1,}px)\s+?){3})?rgba?\((\d{1,3},\s*?){2}\d{1,3}(,\s*?0?\.\d+?)?\)$/gi;
-		this.commentMatchReg = /\/\*(?:[^*]|[\r\n]|(\*+([^*/]|[\r\n])))*\*+\//g;
 
 		this.css = '';
 		this.tree = {};
@@ -37,6 +45,7 @@ class css2less extends stream.Transform {
 		this.vars = {};
 		this.vars_index = 0;
 		this.vendorMixins = {};
+		this.commentsMapper = [];
 	}
 
 	_transform (chunk, enc, done) {
@@ -47,8 +56,8 @@ class css2less extends stream.Transform {
 	_flush (done) {
 		this.generateTree();
 		this.renderLess();
+		this.finalize();
 
-		this.push(this.less.join(''));
 		done();
 	}
 
@@ -199,24 +208,46 @@ class css2less extends stream.Transform {
 	}
 
 	generateTree () {
-		let introCommentMatch = this.commentMatchReg.exec(this.css.trim());
-		if (introCommentMatch && introCommentMatch.index === 0) {
-			this.introComment = introCommentMatch[0];
-		}
+		const introCommentRegex = /\/\*(?:[^*]|[\r\n]|(?:\*+(?:[^*/]|[\r\n])))*\*+\/\s*/;
 
-		let searchImportFn = (match, q, path) => {
+		const searchImportFn = (match, q, path) => {
 			this.less.push(`@import "${path}";\n`);
 			return '';
 		};
+		const commentKeeperFn = (flags, char, content) => {
+			flags.done = true;
 
-		let temp = stringSplitAndTrim(this.css, /\n/g)
-					.join('')
-					.replace(this.commentMatchReg, '')
-					.replace(/@import\s+(?:url\()?([\"'])((?:\\\1|.)+?)\1[^;]*?;/gi, searchImportFn)
-					.replace(/[^\{\}]+\{\s*\}/g, ' ');
+			const idx = this.commentsMapper.length || 1;
+			const mark = `\u2588${idx}\u2502`;
 
-		let styles = stringSplitAndTrim(temp, /[\{\}]/g);
+			this.commentsMapper[idx] = content.trim();
+
+			if (char === ';') {
+				return mark + char;
+			}
+
+			return char + mark;
+		};
+
+		let temp = this.css.trim().replace(introCommentRegex, (match, index) => {
+			if (index === 0) {
+				this.introComment = match.trim();
+				return '';
+			}
+			return match;
+		});
+
+		temp = stringSplitAndTrim(
+			repeatReplaceUntil(temp,
+				/([}{\u2502]|(?:\u2502?;))\s*\/\*((?:[^*]|[\r\n]|(\*+([^*/]|[\r\n])))*)\*+\/\s*/gi,
+				commentKeeperFn
+			), /\n/g)
+			.join('')
+			.replace(/@import\s+(?:url\()?([\"'])((?:\\\1|.)+?)\1[^;]*?;/gi, searchImportFn)
+			.replace(/[^\{\}]+\{\s*\}/g, ' ');
+
 		let styleDefs = [];
+		let styles = stringSplitAndTrim(temp, /[\{\}]/g);
 
 		styles.forEach((val, i) => {
 			if (!(i & 1)) {
@@ -363,6 +394,60 @@ class css2less extends stream.Transform {
 				index++;
 			}
 		}
+	}
+
+	finalize () {
+		let output = this.less.join('');
+
+		if (this.commentsMapper.length > 0) {
+			output = repeatReplaceUntil(output,
+				/(^[\t ]+)?\u2588(\d+)\u2502((?!\u2588);?)/gm,
+				(flags, indent, id, suffix, pos, haystack) => {
+					flags.done = true;
+
+					indent = indent || '';
+
+					let comment = this.commentsMapper[+id];
+					let isCommentedProperty = false;
+
+					// commented css rule
+					if (cssp.some(rule => comment.indexOf(rule) === 0)) {
+						isCommentedProperty = true;
+
+						let nextLineIndent = haystack
+							.substr(pos + id.length + 3, 80)
+							.match(/^[\r\n]+(\s*)/);
+
+						if (nextLineIndent) {
+							indent = nextLineIndent[1];
+						}
+					}
+					// multiline comment
+					else if (~comment.indexOf('\n')) {
+						comment = comment.replace(/\n/g, `\n${indent}`)
+								.replace(/^(\*\s+)/, `\n${indent} $1`) + '\n';
+					}
+
+					comment = `/* ${comment.replace(/^\*\s+/, '')} */`;
+					if (suffix === ';') {
+						if (isCommentedProperty) {
+							comment = `;\n${indent}${comment}`;
+							indent = '';
+						}
+						else {
+							comment = '; ' + comment;
+						}
+					}
+					else {
+						comment += `\n${indent}`;
+					}
+
+					return indent + comment;
+				}
+			);
+		}
+
+		this.push(output);
 	}
 };
 //-----------------------------------------------------------------------------
