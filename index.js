@@ -178,12 +178,15 @@ class css2less extends stream.Transform {
 			return;
 		}
 
-		if (!selectors || !selectors.length) {
-			if (this.options.updateColors) {
-				style = this.matchVariable(style);
-			}
-			if (this.options.vendorMixins) {
-				style = this.matchVendorPrefixMixin(style);
+		if (!(selectors && selectors.length)) {
+			// test if it's not just comment in the rule...
+			if (!/^\u2588.+\u2502$/.test(style)) {
+				if (this.options.updateColors) {
+					style = this.matchVariable(style);
+				}
+				if (this.options.vendorMixins) {
+					style = this.matchVendorPrefixMixin(style);
+				}
 			}
 
 			tree.style = (tree.style || '') + style;
@@ -260,16 +263,18 @@ class css2less extends stream.Transform {
 
 		styleDefs.forEach(style => {
 			let rule = style[0].replace(/\s*>\s*/gi, ' &>');
+			let props = style[1];
 
-			if (~rule.indexOf(',')) {
-				this.addRule(this.tree, [rule], style[1]);
+			let rules = [ rule ];
+			if (!~rule.indexOf(',')) {
+				rules = stringSplitAndTrim(
+					rule.replace(/:(?!:?\-)/gi, ' &:'), /\s+/gi)
+						.map(it => it.replace(/&>/gi, '& > ')
+				);
 			}
-			else {
-				let rules_split = stringSplitAndTrim(rule.replace(/:(?!:?\-)/gi, ' &:'), /\s+/gi)
-											.map(it => it.replace(/&>/gi, '& > '));
 
-				this.addRule(this.tree, rules_split, style[1]);
-			}
+			this.addRule(this.tree, rules, props);
+
 		}, this);
 	}
 
@@ -349,7 +354,7 @@ class css2less extends stream.Transform {
 
 			if (i == 'style') {
 				let rules = stringSplitAndTrim(element, /\;(?!base64)/gi);
-				this.less.push(rules.join(';\n'), '\n');
+				this.less.push(rules.join(';\n') + '\n');
 			}
 			else {
 				if (index > 0) {
@@ -370,14 +375,21 @@ class css2less extends stream.Transform {
 
 				this.less.push('{\n');
 
-				let style = element.style;
-				delete element.style;
+				if (element.style) {
+					let style = element.style;
+					delete element.style;
 
-				if (style) {
-					let temp = stringSplitAndTrim(style, /\;(?!base64)/gi);
-					let indented = temp.map(it => this.getIndent(indent + this.options.indentSize) + it + ';').join('\n');
+					let ind = this.getIndent(indent + this.options.indentSize);
 
-					this.less.push(indented, '\n');
+					// test if it's just comment in the rule...
+					if (/^\u2588.+\u2502$/.test(style)) {
+						this.less.push(ind + style);
+					}
+					else {
+						this.less.push(stringSplitAndTrim(style, /\;(?!base64)/gi)
+										.map(it => `${ind}${it};`)
+										.join('\n') + '\n');
+					}
 
 					if (children && children.length) {
 						this.less.push(this.options.blockSeparator);
@@ -408,18 +420,16 @@ class css2less extends stream.Transform {
 					indent = indent || '';
 
 					let comment = this.commentsMapper[+id];
-					let isCommentedProperty = false;
+					let commentedPropertyIndent = '';
 
-					// commented css rule
+					// commented css property
 					if (cssp.some(rule => comment.indexOf(rule) === 0)) {
-						isCommentedProperty = true;
-
-						let nextLineIndent = haystack
-							.substr(pos + id.length + 3, 80)
-							.match(/^[\r\n]+(\s*)/);
-
-						if (nextLineIndent) {
-							indent = nextLineIndent[1];
+						commentedPropertyIndent = indent;
+						for (let i = pos - 1; i > 0; --i) {
+							if (~'\n\r'.indexOf(haystack[i])) {
+								commentedPropertyIndent = haystack.substr(++i, 80).match(/^\s*/)[0];
+								break;
+							}
 						}
 					}
 					// multiline comment
@@ -430,8 +440,8 @@ class css2less extends stream.Transform {
 
 					comment = `/* ${comment.replace(/^\*\s+/, '')} */`;
 					if (suffix === ';') {
-						if (isCommentedProperty) {
-							comment = `;\n${indent}${comment}`;
+						if (commentedPropertyIndent) {
+							comment = `;\n${commentedPropertyIndent}${comment}`;
 							indent = '';
 						}
 						else {
