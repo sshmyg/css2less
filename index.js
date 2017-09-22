@@ -75,7 +75,7 @@ class css2less extends stream.Transform {
 		return result;
 	}
 
-	convertIfVariable (value) {
+	convertIfVariable (value, key) {
 		if (/(^@var)|(^\d+(\.\d+)?(%|p[ctx]|e[mx]|[cm]m|in)?$)/i.test(value)) {
 			return value;
 		}
@@ -92,12 +92,23 @@ class css2less extends stream.Transform {
 		if (isColor || this.rgbaMatchReg.test(value) ||
 			/^url\(([\"'])((?:\\\1|.)+?)\1\)$/i.test(value)) {
 
-			if (!this.vars[value]) {
-				this.vars[value] = '@var-' + this.options.filePathway.concat(this.vars_index).join('-');
-				this.vars_index++;
+			let usages = [];
+			if (!this.vendorPrefixesReg.test(key)) {
+				usages = this.currentProcessingSelector.map(value => `${key} @\`${value}`);
 			}
 
-			return this.vars[value];
+			if (this.vars[value]) {
+				Array.prototype.push.apply(this.vars[value].usages, usages);
+			}
+			else {
+				this.vars_index++;
+				this.vars[value] = {
+					'id': '@var-' + this.options.filePathway.concat(this.vars_index).join('-'),
+					'usages': usages
+				};
+			}
+
+			return this.vars[value].id;
 		}
 
 		return value;
@@ -113,12 +124,13 @@ class css2less extends stream.Transform {
 				return;
 			}
 
-			value = value.replace(this.rgbaMatchReg, match => this.convertIfVariable(match));
-			let values = value.split(/\s+/gi).map(v => this.convertIfVariable(v));
+			value = value.replace(this.rgbaMatchReg, m => this.convertIfVariable(m, key));
+			let values = value.split(/\s+/gi).map(v => this.convertIfVariable(v, key));
 
 			result.push((i ? '\n' : '') + key,
 				this.options.nameValueSeparator,
 				values.join(' ') + ';');
+
 		}, this);
 
 		return result.join('');
@@ -195,19 +207,17 @@ class css2less extends stream.Transform {
 		}
 		else {
 			let first = stringSplitAndTrim(selectors[0], /\s*[,]\s*/gi)
-									.join(this.options.selectorSeparator);
+						.join(this.options.selectorSeparator);
 
 			if (!tree.children) {
 				tree.children = [];
 			}
 
-			let node = tree[first];
-			if (!node) {
-				node = tree[first] = {};
-			}
+			let node = tree[first] || (tree[first] = {});
 
 			selectors.splice(0, 1);
 			tree.children.push(node);
+
 			this.addRule(node, selectors, style);
 		}
 	}
@@ -262,6 +272,11 @@ class css2less extends stream.Transform {
 			let rule = style[0];
 			let rules = [ rule ];
 
+			// store current processing selector(s) to put into variable's comment...
+			this.currentProcessingSelector = stringSplitAndTrim(rule, /\s*[,]\s*/gi)
+					.map(s => s.replace(/\u2588\d+\u2502/g, '').replace(/\s+/g, ' '));
+
+
 			if (!~rule.indexOf(',')) {
 				rule = rule.replace(/\s*([+~>])\s*/gi, ' &$1')
 					.replace(/(\w):(?!(:?\-)|not|dir|lang|first|last|nth|only)/gi, '$1 &:');
@@ -312,21 +327,27 @@ class css2less extends stream.Transform {
 		if (!tree) {
 			let colorVariables = [];
 			_.forOwn(this.vars, (v, k) => {
-				colorVariables.push(`${v}${this.options.nameValueSeparator}${k};\n`);
+				let usg = v.usages.sort();
+				if (usg.length > 1) {
+					colorVariables.push(`\n/*\n * ${usg.join('\n * ')}\n */\n`);
+				}
+				else {
+					colorVariables.push(usg.length ? `\n/* ${usg[0]} */\n`: '');
+				}
+
+				colorVariables.push(`${v.id}${this.options.nameValueSeparator}${k};\n`);
 			});
 
 			if (this.options.variablesPath) {
-				fs.appendFile(this.options.variablesPath, colorVariables.join('') + '\n', ()=>{});
+				fs.appendFile(this.options.variablesPath, colorVariables.join('').trim() + '\n', ()=>{});
 				if (this.vars_index > 0) {
 					this.less.unshift(`@import (reference) "${path.basename(this.options.variablesPath)}";\n\n`);
 					this.less.push('\n');
 				}
 			}
-			else {
-				this.less.push.apply(this.less, colorVariables);
-				if (this.vars_index > 0) {
-					this.less.push('\n');
-				}
+			else if (this.vars_index > 0) {
+				this.less.push.apply(this.less, colorVariables.filter((v, i) => (i & 1)));
+				this.less.push('\n');
 			}
 
 			if (this.introComment) {
