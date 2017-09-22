@@ -38,6 +38,8 @@ class css2less extends stream.Transform {
 
 		this.vendorPrefixesReg = new RegExp('^-(' + options.vendorPrefixesList.join('|') + ')-', 'gi');
 		this.rgbaMatchReg = /(((0|\d{1,}px)\s+?){3})?rgba?\((\d{1,3},\s*?){2}\d{1,3}(,\s*?0?\.\d+?)?\)$/gi;
+		this.introCommentRegex = /\/\*(?:[^*]|[\r\n]|(?:\*+(?:[^*/]|[\r\n])))*\*+\/\s*/;
+		this.markedCommentReg = /^\u2588.+\u2502$/;
 
 		this.css = '';
 		this.tree = {};
@@ -180,7 +182,7 @@ class css2less extends stream.Transform {
 
 		if (!(selectors && selectors.length)) {
 			// test if it's not just comment in the rule...
-			if (!/^\u2588.+\u2502$/.test(style)) {
+			if (!this.markedCommentReg.test(style)) {
 				if (this.options.updateColors) {
 					style = this.matchVariable(style);
 				}
@@ -210,29 +212,23 @@ class css2less extends stream.Transform {
 		}
 	}
 
+	commentKeeperCallback (flags, char, content) {
+		flags.done = true;
+
+		const idx = this.commentsMapper.length || 1;
+		const mark = `\u2588${idx}\u2502`;
+
+		this.commentsMapper[idx] = content.trim();
+
+		if (char === ';') {
+			return mark + char;
+		}
+
+		return char + mark;
+	}
+
 	generateTree () {
-		const introCommentRegex = /\/\*(?:[^*]|[\r\n]|(?:\*+(?:[^*/]|[\r\n])))*\*+\/\s*/;
-
-		const searchImportFn = (match, q, path) => {
-			this.less.push(`@import "${path}";\n`);
-			return '';
-		};
-		const commentKeeperFn = (flags, char, content) => {
-			flags.done = true;
-
-			const idx = this.commentsMapper.length || 1;
-			const mark = `\u2588${idx}\u2502`;
-
-			this.commentsMapper[idx] = content.trim();
-
-			if (char === ';') {
-				return mark + char;
-			}
-
-			return char + mark;
-		};
-
-		let temp = this.css.trim().replace(introCommentRegex, (match, index) => {
+		let temp = this.css.trim().replace(this.introCommentRegex, (match, index) => {
 			if (index === 0) {
 				this.introComment = match.trim();
 				return '';
@@ -243,10 +239,11 @@ class css2less extends stream.Transform {
 		temp = stringSplitAndTrim(
 			repeatReplaceUntil(temp,
 				/([}{\u2502]|(?:\u2502?;))\s*\/\*((?:[^*]|[\r\n]|(\*+([^*/]|[\r\n])))*)\*+\/\s*/gi,
-				commentKeeperFn
+				this.commentKeeperCallback.bind(this)
 			), /\n/g)
 			.join('')
-			.replace(/@import\s+(?:url\()?([\"'])((?:\\\1|.)+?)\1[^;]*?;/gi, searchImportFn)
+			.replace(/@import\s+(?:url\()?([\"'])((?:\\\1|.)+?)\1[^;]*?;/gi,
+				(match, q, path) => this.less.push(`@import "${path}";\n`) && '')
 			.replace(/[^\{\}]+\{\s*\}/g, ' ');
 
 		let styleDefs = [];
@@ -262,18 +259,18 @@ class css2less extends stream.Transform {
 		});
 
 		styleDefs.forEach(style => {
-			let rule = style[0].replace(/\s*>\s*/gi, ' &>');
-			let props = style[1];
-
+			let rule = style[0];
 			let rules = [ rule ];
+
 			if (!~rule.indexOf(',')) {
-				rules = stringSplitAndTrim(
-					rule.replace(/:(?!:?\-)/gi, ' &:'), /\s+/gi)
-						.map(it => it.replace(/&>/gi, '& > ')
-				);
+				rule = rule.replace(/\s*([+~>])\s*/gi, ' &$1')
+					.replace(/(\w):(?!(:?\-)|not|dir|lang|first|last|nth|only)/gi, '$1 &:');
+
+				rules = stringSplitAndTrim(rule, /\s+/gi)
+						.map(it => it.replace(/&([+~>])/gi, '$1 '));
 			}
 
-			this.addRule(this.tree, rules, props);
+			this.addRule(this.tree, rules, style[1]);
 
 		}, this);
 	}
@@ -382,7 +379,7 @@ class css2less extends stream.Transform {
 					let ind = this.getIndent(indent + this.options.indentSize);
 
 					// test if it's just comment in the rule...
-					if (/^\u2588.+\u2502$/.test(style)) {
+					if (this.markedCommentReg.test(style)) {
 						this.less.push(ind + style);
 					}
 					else {
@@ -412,6 +409,7 @@ class css2less extends stream.Transform {
 		let output = this.less.join('');
 
 		if (this.commentsMapper.length > 0) {
+			// revert all marked comment into output...
 			output = repeatReplaceUntil(output,
 				/(^[\t ]+)?\u2588(\d+)\u2502((?!\u2588);?)/gm,
 				(flags, indent, id, suffix, pos, haystack) => {
