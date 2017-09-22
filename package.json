@@ -1,6 +1,6 @@
 {
   "name": "css2less",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Convert css to less",
   "homepage": "https://github.com/mborik/css2less",
   "authors": {
