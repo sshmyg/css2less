@@ -12,7 +12,10 @@ const appname = 'css2less';
 const fs = require('fs');
 const path = require('path');
 const meow = require('meow');
+const promisePipe = require("promisepipe");
+
 const css2less = require('./index.js');
+const { processFiles } = require('./utils.js');
 
 let cli = meow(`
 	Usage:
@@ -51,43 +54,53 @@ let cli = meow(`
 if (!cli.input.length)
 	cli.showHelp();
 
-cli.input.forEach(function (file) {
-	let cwd = process.cwd();
-	let filePath = path.resolve(cwd, file);
+const cwd = process.cwd();
+const opt = Object.assign({ filePathway: [] }, cli.flags);
+
+processFiles(cli.input, file => {
+	const filePath = path.resolve(cwd, file);
 
 	try {
 		if (!fs.statSync(filePath).isFile()) {
-			throw new Error("ENOTFILE");
+			throw new Error('ENOTFILE');
 		}
 	}
 	catch (err) {
-		console.error('Invalid file: "%s" (%s)', filePath,
-			(err.code || err.message || err));
-		return;
+		return Promise.reject(
+			new Error(`Invalid file: '${file}' (${err.message || err.code})`)
+		);
 	}
 
-	let ext = path.extname(file);
+	const ext = path.extname(file);
 	if (ext.toLowerCase() !== '.css') {
-		console.warn("%s hasn't proper extension, you've been warned!", file);
-		return;
+		return Promise.reject(
+			new Error(`Invalid file: '${file}': Not a proper extension!`)
+		);
 	}
 
-	let fileDir = path.dirname(filePath);
-	let fileBaseName = path.basename(file, ext);
-	let lessFile = path.join(fileDir, fileBaseName + '.less');
+	const fileDir = path.dirname(filePath);
+	const fileBaseName = path.basename(file, ext);
+	const lessFile = path.join(fileDir, fileBaseName + '.less');
 
-	if (cli.flags.variablesPath) {
-		let varDir = path.dirname(cli.flags.variablesPath);
-		let varRelPath = path.relative(varDir, fileDir);
+	if (opt.variablesPath) {
+		const varDir = path.dirname(opt.variablesPath);
+		const varRelPath = path.relative(varDir, fileDir);
 
-		cli.flags.filePathway = [];
 		if (varRelPath.length > 0) {
-			cli.flags.filePathway = varRelPath.split(path.sep);
+			opt.filePathway = varRelPath.split(path.sep);
 		}
-		cli.flags.filePathway.push(fileBaseName);
+		opt.filePathway.push(fileBaseName);
 	}
 
-	fs.createReadStream(filePath)
-		.pipe(new css2less(cli.flags))
-		.pipe(fs.createWriteStream(lessFile));
+	console.log(`Converting '${file}'...`);
+	return promisePipe(
+		fs.createReadStream(filePath),
+		new css2less(opt),
+		fs.createWriteStream(lessFile)
+	).then(stream => {
+		console.log(`> stored into '${lessFile}'.`);
+	}, err => {
+		console.error("> error: ", err.originalError);
+		fs.unlinkSync(lessFile);
+	});
 });

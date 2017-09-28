@@ -18,7 +18,7 @@ const { stringSplitAndTrim, repeatReplaceUntil } = require('./utils');
 //-----------------------------------------------------------------------------
 class css2less extends stream.Transform {
 	constructor (options) {
-		options = _.defaults({}, options, {
+		let opt = _.defaults({}, options, {
 			filePathway: [],
 			encoding: 'utf8',
 			vendorPrefixesList: ['moz', 'o', 'ms', 'webkit'],
@@ -32,11 +32,15 @@ class css2less extends stream.Transform {
 			nameValueSeparator: ': '
 		});
 
-		super({ encoding: options.encoding });
+		super({
+			objectMode: true,
+			highWaterMark: 16,
+			encoding: opt.encoding
+		});
 
-		this.options = options;
+		this.options = opt;
 
-		this.vendorPrefixesReg = new RegExp('^-(' + options.vendorPrefixesList.join('|') + ')-', 'gi');
+		this.vendorPrefixesReg = new RegExp('^-(' + opt.vendorPrefixesList.join('|') + ')-', 'gi');
 		this.rgbaMatchReg = /(((0|\d{1,}px)\s+?){3})?rgba?\((\d{1,3},\s*?){2}\d{1,3}(,\s*?0?\.\d+?)?\)$/gi;
 		this.introCommentRegex = /\/\*(?:[^*]|[\r\n]|(?:\*+(?:[^*/]|[\r\n])))*\*+\/\s*/;
 		this.markedCommentReg = /^\u2588.+\u2502$/;
@@ -203,7 +207,10 @@ class css2less extends stream.Transform {
 				}
 			}
 
-			tree.style = (tree.style || '') + style;
+			if (!tree.style) {
+				tree.style = '';
+			}
+			tree.style += (style || '');
 		}
 		else {
 			let first = stringSplitAndTrim(selectors[0], /\s*[,]\s*/gi)
@@ -248,13 +255,16 @@ class css2less extends stream.Transform {
 
 		temp = stringSplitAndTrim(
 			repeatReplaceUntil(temp,
-				/([}{\u2502]|(?:\u2502?;))\s*\/\*((?:[^*]|[\r\n]|(\*+([^*/]|[\r\n])))*)\*+\/\s*/gi,
+				/(^|[}{\u2502]|(?:\u2502?;))\s*\/\*((?:[^*]|[\r\n]|(\*+([^*/]|[\r\n])))*)\*+\/\s*/gi,
 				this.commentKeeperCallback.bind(this)
 			), /\n/g)
 			.join('')
 			.replace(/@import\s+(?:url\()?([\"'])((?:\\\1|.)+?)\1[^;]*?;/gi,
-				(match, q, path) => this.less.push(`@import "${path}";\n`) && '')
-			.replace(/[^\{\}]+\{\s*\}/g, ' ');
+				(match, q, path) => {
+					let lessPath = path.replace('.css', '.less');
+					this.less.push(`@import "${lessPath}";\n`);
+					return '';
+				}).replace(/[^\{\}]+\{\s*\}/g, ' ');
 
 		let styleDefs = [];
 		let styles = stringSplitAndTrim(temp, /[\{\}]/g);
@@ -395,8 +405,11 @@ class css2less extends stream.Transform {
 
 				if (element.style) {
 					let style = element.style;
-					delete element.style;
+					if (typeof element.style !== 'string') {
+						console.warn("element.style invalid type!\n`%s`", JSON.stringify(element, null, '\t'));
+					}
 
+					delete element.style;
 					let ind = this.getIndent(indent + this.options.indentSize);
 
 					// test if it's just comment in the rule...

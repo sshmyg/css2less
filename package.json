@@ -1,16 +1,18 @@
 {
   "name": "css2less",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Convert css to less",
   "homepage": "https://github.com/mborik/css2less",
   "authors": {
     "name": "Serhey Shmyg",
     "email": "serhey.shmyg.all@gmail.com"
   },
-  "contributors": [{
-    "name": "Martin Bórik",
-    "email": "mborik@users.sourceforge.net"
-  }],
+  "contributors": [
+    {
+      "name": "Martin Bórik",
+      "email": "mborik@users.sourceforge.net"
+    }
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/mborik/css2less.git"
@@ -28,6 +30,7 @@
   "license": "ISC",
   "dependencies": {
     "lodash": "^4.16.2",
-    "meow": "^3.7.0"
+    "meow": "^3.7.0",
+    "promisepipe": "^2.0.0"
   }
 }

@@ -23,5 +23,9 @@ module.exports = {
 		} while (flags.done);
 
 		return haystack;
-	}
+	},
+
+	'processFiles': (files, callback) => files.reduce((promise, file) => {
+		return promise.then(() => callback(file));
+	}, Promise.resolve())
 };
