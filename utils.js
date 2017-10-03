@@ -27,5 +27,7 @@ module.exports = {
 
 	'processFiles': (files, callback) => files.reduce((promise, file) => {
 		return promise.then(() => callback(file));
-	}, Promise.resolve())
+	}, Promise.resolve()),
+
+	'path2posix': (str) => str.replace(/\\/g, '/')
 };

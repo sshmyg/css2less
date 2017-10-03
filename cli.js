@@ -15,7 +15,7 @@ const meow = require('meow');
 const promisePipe = require("promisepipe");
 
 const css2less = require('./index.js');
-const { processFiles } = require('./utils.js');
+const utils = require('./utils.js');
 
 let cli = meow(`
 	Usage:
@@ -57,7 +57,7 @@ if (!cli.input.length)
 const cwd = process.cwd();
 const opt = Object.assign({ filePathway: [] }, cli.flags);
 
-processFiles(cli.input, file => {
+utils.processFiles(cli.input, file => {
 	const filePath = path.resolve(cwd, file);
 
 	try {
@@ -82,6 +82,8 @@ processFiles(cli.input, file => {
 	const fileBaseName = path.basename(file, ext);
 	const lessFile = path.join(fileDir, fileBaseName + '.less');
 
+	opt.absFilePath = opt.absBasePath = utils.path2posix(path.resolve(fileDir));
+
 	if (opt.variablesPath) {
 		const varDir = path.dirname(opt.variablesPath);
 		const varRelPath = path.relative(varDir, fileDir);
@@ -89,7 +91,9 @@ processFiles(cli.input, file => {
 		if (varRelPath.length > 0) {
 			opt.filePathway = varRelPath.split(path.sep);
 		}
+
 		opt.filePathway.push(fileBaseName);
+		opt.absBasePath = utils.path2posix(path.resolve(varDir));
 	}
 
 	console.log(`Converting '${file}'...`);

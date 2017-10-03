@@ -13,7 +13,7 @@ const fs = require('fs');
 
 const cssc = require('./csscolors.json');
 const cssp = require('./cssprops.json');
-const { stringSplitAndTrim, repeatReplaceUntil } = require('./utils');
+const { stringSplitAndTrim, repeatReplaceUntil, path2posix } = require('./utils');
 
 //-----------------------------------------------------------------------------
 class css2less extends stream.Transform {
@@ -87,18 +87,44 @@ class css2less extends stream.Transform {
 		// find the named value or convert hex triplet e.g. #639 to full hex color...
 		value = _.get(cssc, value.toLowerCase()) || value.replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, '#$1$1$2$2$3$3');
 
-		let isColor = false;
+		let matches;
+		let processed = false;
 		if (/^#[0-9a-f]{6}$/i.test(value)) {
-			isColor = true;
+			processed = true;
 			value = value.toLowerCase();
 		}
+		else if (!!(matches = /^url\(([\"'])((?:\\\1|.)+?)\1\)$/i.exec(value))) {
+			processed = true;
 
-		if (isColor || this.rgbaMatchReg.test(value) ||
-			/^url\(([\"'])((?:\\\1|.)+?)\1\)$/i.test(value)) {
+			// path relativizer - try to find portion of url path in base file path
+			let file = path2posix(matches[2]).replace(/^\/([^\/]+?\/)+/, (match => {
+				let head = match.substr(0, match.length - 1);
+				let tail = '';
+				let relative = '';
 
+				do {
+					if (~this.options.absFilePath.indexOf(head)) {
+						return relative + tail;
+					}
+
+					let lastSlash = head.lastIndexOf('/');
+					tail = head.substr(lastSlash + 1) + '/' + tail;
+					relative = '../' + relative;
+
+					head = head.substr(0, lastSlash);
+				} while (head.length > 1);
+
+				return match;
+			}));
+
+			let base = path.resolve(this.options.absFilePath, file);
+			value = `url("${path2posix(path.relative(this.options.absBasePath, base))}")`;
+		}
+
+		if (processed || this.rgbaMatchReg.test(value)) {
 			let usages = [];
 			if (!this.vendorPrefixesReg.test(key)) {
-				usages = this.currentProcessingSelector.map(value => `${key} @\`${value}`);
+				usages = this.currentProcessingSelector.map(value => `${key} @ ${value}`);
 			}
 
 			if (this.vars[value]) {
