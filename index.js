@@ -93,7 +93,7 @@ class css2less extends stream.Transform {
 			processed = true;
 			value = value.toLowerCase();
 		}
-		else if (!!(matches = /^url\(([\"'])((?:\\\1|.)+?)\1\)$/i.exec(value))) {
+		else if (!!(matches = /^url\(([\"']?)((?:\\\1|.)+?)\1\)$/i.exec(value))) {
 			processed = true;
 
 			// path relativizer - try to find portion of url path in base file path

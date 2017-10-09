@@ -54,11 +54,10 @@ let cli = meow(`
 if (!cli.input.length)
 	cli.showHelp();
 
-const cwd = process.cwd();
-const opt = Object.assign({ filePathway: [] }, cli.flags);
-
+// file processor...
 utils.processFiles(cli.input, file => {
-	const filePath = path.resolve(cwd, file);
+	const filePath = path.resolve(process.cwd(), file);
+	const opt = Object.assign({ filePathway: [] }, cli.flags);
 
 	try {
 		if (!fs.statSync(filePath).isFile()) {
