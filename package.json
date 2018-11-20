@@ -15,6 +15,13 @@
     "url": "https://github.com/serheyShmyg/css2less/issues"
   },
   "main": "index.js",
+  "dependencies": {
+    "html2jade": "*",
+    "commander": "*"
+  },
+  "bin": {
+    "css2less": "./cli.js"
+  },
   "scripts": {
     "start" : "gulp",
     "test": "echo \"Error: no test specified\" && exit 1"
