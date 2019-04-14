@@ -1,476 +1,522 @@
-Array.lambda = function (s) {
-	if (typeof s !== "string") {
-		return s;
-	}
+/**
+ * css2less - main code of the converter implemented into transform stream
+ *
+ * Converter of pure CSS into the structured LESS keeping all the imports & comments
+ * and optionally extracting all the colors into variables.
+ * Original code by Serhey Shmyg, continued and extended by Martin Bórik.
+ */
 
-	s = s.replace("=>", "`return ") + ";";
-	s = s.split("`");
-	s = Function.apply(null, s);
+const _ = require('lodash');
+const stream = require('stream');
+const path = require('path');
+const fs = require('fs');
 
-	return s;
-};
-Array.prototype.any = function (d) {
-	var result;
+const cssc = require('./csscolors.json');
+const cssp = require('./cssprops.json');
+const { stringSplitAndTrim, repeatReplaceUntil, path2posix } = require('./utils');
 
-	d = Array.lambda(d);
-
-	if (d) {
-		this.forEach(function (it) {
-			if (d(it)) {
-				result = it;
-				return { stop: true };
-			}
-		});
-	} else {
-		result = this[0];
-	}
-
-	return result ? true : false;
-}
-Array.prototype.select = function (d) {
-	var result = [];
-
-	d = Array.lambda(d);
-
-	this.forEach(function (it, i) {
-		result.push(d(it, i));
-	});
-
-	return result;
-};
-Array.prototype.where = function (d) {
-	var result = [];
-
-	d = Array.lambda(d);
-
-	this.forEach(function (it, i) {
-		if (d(it, i)) {
-			result.push(it);
-		}
-	});
-
-	return result;
-};
-
-var css2less = function (css, options) {
-	var me = this;
-
-	var ctor = function () {
-		me.css = css || "";
-		me.options = {
-			cssColors: ["aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige", "bisque", "black", "blanchedalmond", "blue", "blueviolet", "brown", "burlywood", "cadetblue", "chartreuse", "chocolate", "coral", "cornflowerblue", "cornsilk", "crimson", "cyan", "darkblue", "darkcyan", "darkgoldenrod", "darkgray", "darkgrey", "darkgreen", "darkkhaki", "darkmagenta", "darkolivegreen", "darkorange", "darkorchid", "darkred", "darksalmon", "darkseagreen", "darkslateblue", "darkslategray", "darkslategrey", "darkturquoise", "darkviolet", "deeppink", "deepskyblue", "dimgray", "dimgrey", "dodgerblue", "firebrick", "floralwhite", "forestgreen", "fuchsia", "gainsboro", "ghostwhite", "gold", "goldenrod", "gray", "grey", "green", "greenyellow", "honeydew", "hotpink", "indianred", "indigo", "ivory", "khaki", "lavender", "lavenderblush", "lawngreen", "lemonchiffon", "lightblue", "lightcoral", "lightcyan", "lightgoldenrodyellow", "lightgray", "lightgrey", "lightgreen", "lightpink", "lightsalmon", "lightseagreen", "lightskyblue", "lightslategray", "lightslategrey", "lightsteelblue", "lightyellow", "lime", "limegreen", "linen", "magenta", "maroon", "mediumaquamarine", "mediumblue", "mediumorchid", "mediumpurple", "mediumseagreen", "mediumslateblue", "mediumspringgreen", "mediumturquoise", "mediumvioletred", "midnightblue", "mintcream", "mistyrose", "moccasin", "navajowhite", "navy", "oldlace", "olive", "olivedrab", "orange", "orangered", "orchid", "palegoldenrod", "palegreen", "paleturquoise", "palevioletred", "papayawhip", "peachpuff", "peru", "pink", "plum", "powderblue", "purple", "red", "rosybrown", "royalblue", "saddlebrown", "salmon", "sandybrown", "seagreen", "seashell", "sienna", "silver", "skyblue", "slateblue", "slategray", "slategrey", "snow", "springgreen", "steelblue", "tan", "teal", "thistle", "tomato", "turquoise", "violet", "wheat", "white", "whitesmoke", "yellow", "yellowgreen"],
-			vendorPrefixesList: ["-moz", "-o", "-ms", "-webkit"],
-			//vendorPrefixesReg: /^(-moz|-o|-ms|-webkit)-/gi,
-			indentSymbol: "\t",
+//-----------------------------------------------------------------------------
+class css2less extends stream.Transform {
+	constructor (options) {
+		let opt = _.defaults({}, options, {
+			filePathway: [],
+			encoding: 'utf8',
+			vendorPrefixesList: ['moz', 'o', 'ms', 'webkit'],
+			indentSymbol: '\t',
 			indentSize: 1,
-			selectorSeparator: ",\n",
+			selectorSeparator: ',\n',
 			blockFromNewLine: false,
-			blockSeparator: "\n",
-			updateColors: false,
-			vendorMixins: true,
-			nameValueSeparator: ": "
-		};
-		var vendorPrefixesListStr = me.options.vendorPrefixesList.join('|');
+			blockSeparator: '\n',
+			updateColors: true,
+			vendorMixins: false,
+			nameValueSeparator: ': '
+		});
 
-		me.options.vendorPrefixesReg = new RegExp('^(' + vendorPrefixesListStr + ')-', 'gi');
+		super({
+			objectMode: true,
+			highWaterMark: 16,
+			encoding: opt.encoding
+		});
 
-		for (var i in me.options) {
-			if (typeof options[i] === 'undefined') continue;
-			me.options[i] = options[i];
-		}
+		this.options = opt;
 
-		me.tree = {};
-		me.less = [];
-		me.colors = {};
-		me.colors_index = 0;
-		me.vendorMixins = {};
-	},
-	isBase64 = function(str) {
-		return str.indexOf('base64') !== -1;
-	};
+		this.vendorPrefixesReg = new RegExp('^-(' + opt.vendorPrefixesList.join('|') + ')-', 'gi');
+		this.rgbaMatchReg = /(((0|\d{1,}px)\s+?){3})?rgba?\((\d{1,3},\s*?){2}\d{1,3}(,\s*?0?\.\d+?)?\)$/gi;
+		this.introCommentRegex = /\/\*(?:[^*]|[\r\n]|(?:\*+(?:[^*/]|[\r\n])))*\*+\/\s*/;
+		this.markedCommentReg = /^\u2588.+\u2502$/;
 
-	me.processLess = function () {
-		me.cleanup();
-
-		if (!me.css) {
-			return false;
-		}
-
-		me.generateTree();
-		me.renderLess();
-		me.less = me.less.join("");
-
-		return true;
-	};
-
-	me.cleanup = function () {
-		me.tree = {};
-		me.less = [];
+		this.css = '';
+		this.tree = {};
+		this.less = [];
+		this.vars = {};
+		this.vars_index = 0;
+		this.vendorMixins = {};
+		this.commentsMapper = [];
 	}
 
-	me.convertRules = function (data) {
-		var arr = data.split(/[;]/gi).select("val=>val.trim()").where("val=>val"),
-			base64Index = false;
+	_transform (chunk, enc, done) {
+		this.css += chunk.toString(this.options.encoding);
+		done();
+	}
 
-		arr.forEach(function(item, i) {
-			if ( isBase64(item) ) base64Index = i;
-		});
-		
-		if (base64Index) {
-			arr[base64Index - 1] = arr[base64Index - 1] + ';' + arr[base64Index];
-			arr.splice(base64Index, 1);
+	_flush (done) {
+		this.generateTree();
+		this.renderLess();
+		this.finalize();
+
+		done();
+	}
+
+//-----------------------------------------------------------------------------
+	getIndent (size) {
+		let result = '';
+		let max = size || this.options.indentSize;
+
+		for (let n = 0; n < max; n++) {
+			result += this.options.indentSymbol;
 		}
-		
-		return arr;
-	};
 
-	me.color = function (value) {
-		value = value.trim();
+		return result;
+	}
 
-		if (me.options.cssColors.indexOf(value) >= 0 || /^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/gi.test(value) || /(rgba?)\(.*\)/gi.test(value)) {
-			return true;
+	convertIfVariable (value, key) {
+		if (/(^@var)|(^\d+(\.\d+)?(%|p[ctx]|e[mx]|[cm]m|in)?$)/i.test(value)) {
+			return value;
 		}
 
-		return false;
-	};
+		// find the named value or convert hex triplet e.g. #639 to full hex color...
+		value = _.get(cssc, value.toLowerCase()) || value.replace(/^#([0-9a-f])([0-9a-f])([0-9a-f])$/i, '#$1$1$2$2$3$3');
 
-	me.convertIfColor = function (color) {
-		color = color.trim();
+		let matches;
+		let processed = false;
+		if (/^#[0-9a-f]{6}$/i.test(value)) {
+			processed = true;
+			value = value.toLowerCase();
+		}
+		else if (!!(matches = /^url\(([\"']?)((?:\\\1|.)+?)\1\)$/i.exec(value))) {
+			processed = true;
 
-		if (me.color(color)) {
-			if (!me.colors[color]) {
-				me.colors[color] = "@color" + me.colors_index;
-				me.colors_index++;
+			// path relativizer - try to find portion of url path in base file path
+			let file = path2posix(matches[2]).replace(/^\/([^\/]+?\/)+/, (match => {
+				let head = match.substr(0, match.length - 1);
+				let tail = '';
+				let relative = '';
+
+				do {
+					if (~this.options.absFilePath.indexOf(head)) {
+						return relative + tail;
+					}
+
+					let lastSlash = head.lastIndexOf('/');
+					tail = head.substr(lastSlash + 1) + '/' + tail;
+					relative = '../' + relative;
+
+					head = head.substr(0, lastSlash);
+				} while (head.length > 1);
+
+				return match;
+			}));
+
+			let base = path.resolve(this.options.absFilePath, file);
+			value = `url("${path2posix(path.relative(this.options.absBasePath, base))}")`;
+		}
+
+		if (processed || this.rgbaMatchReg.test(value)) {
+			let usages = [];
+			if (!this.vendorPrefixesReg.test(key)) {
+				usages = this.currentProcessingSelector.map(value => `${key} @ ${value}`);
 			}
 
-			return me.colors[color];
-		} 
+			if (this.vars[value]) {
+				Array.prototype.push.apply(this.vars[value].usages, usages);
+			}
+			else {
+				this.vars_index++;
+				this.vars[value] = {
+					'id': '@var-' + this.options.filePathway.concat(this.vars_index).join('-'),
+					'usages': usages
+				};
+			}
 
-		return color;
-	};
+			return this.vars[value].id;
+		}
 
-	me.matchColor = function (style) {
-		var rules = me.convertRules(style);
-		var result = [];
+		return value;
+	}
 
-		rules.forEach(function (r, i) {
-			var parts = r.split(/[:]/gi);
-			var key = parts[0].trim();
-			var value = parts[1].trim();
+	matchVariable (style) {
+		let rules = stringSplitAndTrim(style, /\;(?!base64)/gi);
+		let result = [];
 
-			result.push(i > 0 ? "\n" : "", key);
-
+		rules.forEach((rule, i) => {
+			let [ key, value ] = stringSplitAndTrim(rule, /\:(?!image)/gi);
 			if (!value) {
 				return;
 			}
 
-			var oldValues = value.split(/\s+/gi);
-			var newValues = oldValues.select(function (v) {
-				return me.convertIfColor(v);
-			});
+			value = value.replace(this.rgbaMatchReg, m => this.convertIfVariable(m, key));
+			let values = value.split(/\s+/gi).map(v => this.convertIfVariable(v, key));
 
-			result.push(me.options.nameValueSeparator, newValues.join(" "), ";");
-		});
+			result.push((i ? '\n' : '') + key,
+				this.options.nameValueSeparator,
+				values.join(' ') + ';');
 
-		return result.join("");
-	};
+		}, this);
 
-	me.matchVendorPrefixMixin = function (style) {
-		var normal_rules = {};
-		var prefixed_rules = {};
-		var rules = me.convertRules(style);
+		return result.join('');
+	}
 
-		for (var i = 0; i < rules.length; i++) {
-			var e = rules[i].trim();
-			
-			var parts = e.split(/[:]/gi);
+	matchVendorPrefixMixin (style) {
+		let normal_rules = {};
+		let prefixed_rules = {};
+		let rules = stringSplitAndTrim(style, /\;(?!base64)/gi);
 
-			if ( isBase64(e) ) parts = [parts[0], parts[1] + parts[2]];
-
-			var key = parts[0].trim();
-			var value = parts[1].trim();
+		rules.forEach(rule => {
+			let [ key, value ] = stringSplitAndTrim(rule, /\:(?!image)/gi);
 
 			if (!value) {
-				normal_rules[key] = "";
-			} else if (me.options.vendorPrefixesReg.test(key)) {
-				var rule_key = key.replace(me.options.vendorPrefixesReg, "");
-				var values = value.split(/\s+/gi);
-				var newValue = [];
-
-				for (var j = 0; j < values.length; j++) {
-					newValue.push(values[j].trim());
-				}
-
-				newValue = newValue.join(" ");
+				normal_rules[key] = '';
+			}
+			else if (this.vendorPrefixesReg.test(key)) {
+				let rule_key = key.replace(this.vendorPrefixesReg, '');
+				let newValue = value.replace(/\s+/gi, ' ').trim();
 
 				if (prefixed_rules[rule_key] && prefixed_rules[rule_key] != newValue) {
 					return style;
 				}
 
 				prefixed_rules[rule_key] = newValue;
-			} else {
+			}
+			else {
 				normal_rules[key] = value;
 			}
-		}
+		}, this);
 
-		for (var k in prefixed_rules) {
-			var v = prefixed_rules[k];
+		_.forOwn(prefixed_rules, (value, k) => {
+			let v = stringSplitAndTrim(value, /\s+/gi);
 
-			v = v.split(/\s+/gi).select("val=>val.trim()").where("val=>val");
-
-			if (!me.vendorMixins[k]) {
-				me.vendorMixins[k] = v.length;
-			}
+			if (!this.vendorMixins[k])
+				this.vendorMixins[k] = v.length;
 
 			if (normal_rules[k]) {
 				delete normal_rules[k];
-				normal_rules[".vp-" + k + "(" + v.join(", ") + ")"] = "";
+
+				let newKey = `.vp-${k}(${v.join(', ')})`;
+				normal_rules[newKey] = '';
 			}
-		}
+		});
 
-		var result = [];
-
-		for (var k in normal_rules) {
-			var v = normal_rules[k];
-			var r = [k];
-
-			if (v) {
-				r.push(me.options.nameValueSeparator, v, ";\n");
+		let result = [];
+		_.forOwn(normal_rules, (value, rule) => {
+			if (value.trim()) {
+				rule += this.options.nameValueSeparator + value + ';\n';
 			}
+			result.push(rule);
+		});
 
-			result.push(r.join(""));
-		}
+		return result.join('');
+	}
 
-		return result.join("");
-	};
-
-	me.addRule = function (tree, selectors, style) {
+	addRule (tree, selectors, style) {
 		if (!style) {
 			return;
 		}
 
-		if (!selectors || !selectors.length) {
-			if (me.options.updateColors) {
-				style = me.matchColor(style)
-			}
-
-			if (me.options.vendorMixins) {
-				style = me.matchVendorPrefixMixin(style);
+		if (!(selectors && selectors.length)) {
+			// test if it's not just comment in the rule...
+			if (!this.markedCommentReg.test(style)) {
+				if (this.options.updateColors) {
+					style = this.matchVariable(style);
+				}
+				if (this.options.vendorMixins) {
+					style = this.matchVendorPrefixMixin(style);
+				}
 			}
 
 			if (!tree.style) {
-				tree.style = style;
-			} else {
-				tree.style += style;
+				tree.style = '';
 			}
-		} else {
-			var first = selectors[0].split(/\s*[,]\s*/gi).select("val=>val.trim()").where("val=>val").join(me.options.selectorSeparator);
-			
+			tree.style += (style || '');
+		}
+		else {
+			let first = stringSplitAndTrim(selectors[0], /\s*[,]\s*/gi)
+						.join(this.options.selectorSeparator);
+
 			if (!tree.children) {
 				tree.children = [];
 			}
 
-			if (!tree[first]) {
-				tree[first] = {};
-			}
-
-			var node = tree[first];
+			let node = tree[first] || (tree[first] = {});
 
 			selectors.splice(0, 1);
 			tree.children.push(node);
-			me.addRule(node, selectors, style);
+
+			this.addRule(node, selectors, style);
 		}
+	}
+
+	commentKeeperCallback (flags, char, content) {
+		flags.done = true;
+
+		const idx = this.commentsMapper.length || 1;
+		const mark = `\u2588${idx}\u2502`;
+
+		this.commentsMapper[idx] = content.trim();
+
+		if (char === ';') {
+			return mark + char;
+		}
+
+		return char + mark;
+	}
+
+	generateTree () {
+		let temp = this.css.trim().replace(this.introCommentRegex, (match, index) => {
+			if (index === 0) {
+				this.introComment = match.trim();
+				return '';
+			}
+			return match;
+		});
+
+		temp = stringSplitAndTrim(
+			repeatReplaceUntil(temp,
+				/(^|[}{\u2502]|(?:\u2502?;))\s*\/\*((?:[^*]|[\r\n]|(\*+([^*/]|[\r\n])))*)\*+\/\s*/gi,
+				this.commentKeeperCallback.bind(this)
+			), /\n/g)
+			.join('')
+			.replace(/@import\s+(?:url\()?([\"'])((?:\\\1|.)+?)\1[^;]*?;/gi,
+				(match, q, path) => {
+					let lessPath = path.replace('.css', '.less');
+					this.less.push(`@import "${lessPath}";\n`);
+					return '';
+				}).replace(/[^\{\}]+\{\s*\}/g, ' ');
+
+		let styleDefs = [];
+		let styles = stringSplitAndTrim(temp, /[\{\}]/g);
+
+		styles.forEach((val, i) => {
+			if (!(i & 1)) {
+				styleDefs.push([val]);
+			}
+			else {
+				styleDefs[styleDefs.length - 1].push(val);
+			}
+		});
+
+		styleDefs.forEach(style => {
+			let rule = style[0];
+			let rules = [ rule ];
+
+			// store current processing selector(s) to put into variable's comment...
+			this.currentProcessingSelector = stringSplitAndTrim(rule, /\s*[,]\s*/gi)
+					.map(s => s.replace(/\u2588\d+\u2502/g, '').replace(/\s+/g, ' '));
+
+
+			if (!~rule.indexOf(',')) {
+				rule = rule.replace(/\s*([+~>])\s*/gi, ' &$1')
+					.replace(/(\w):(?!(:?\-)|not|dir|lang|first|last|nth|only)/gi, '$1 &:');
+
+				rules = stringSplitAndTrim(rule, /\s+/gi)
+						.map(it => it.replace(/&([+~>])/gi, '$1 '));
+			}
+
+			this.addRule(this.tree, rules, style[1]);
+
+		}, this);
+	}
+
+	buildMixinList (indent) {
+		let less = [];
+
+		_.forOwn(this.vendorMixins, (v, k) => {
+			let args = [];
+
+			for (let i = 0; i < v; i++) {
+				args.push('@p' + i);
+			}
+
+			less.push(`.vp-${k}(${args.join(', ')})`);
+			less.push(this.options.blockFromNewLine ? '\n' : ' ');
+
+			less.push('{\n');
+			this.options.vendorPrefixesList.forEach((vp, i) => {
+				less.push(this.getIndent(indent + this.options.indentSize));
+				less.push(`-${vp}-${k}${this.options.nameValueSeparator}${args.join(' ')};\n`);
+			}, this);
+
+			less.push(this.getIndent(indent + this.options.indentSize));
+			less.push(`${k}${this.options.nameValueSeparator}${args.join(' ')};\n`);
+			less.push('}\n');
+		});
+
+		if (less.length) {
+			less.push('\n');
+		}
+
+		return less.join('');
 	};
 
-	me.generateTree = function () {
-		var csss = me.css.split(/\n/gi);
-		var temp = csss.select("val=>val.trim()").where("val=>val");
-
-		temp = temp.join("");
-		temp = temp.replace(/[/][*]+[^\*]*[*]+[/]/gi, "");
-		temp = temp.replace(/[^{}]+[{]\s*[}]/ig, " ");
-		temp = temp.split(/[{}]/gi).where("val=>val");
-
-		var styles = [];
-
-		for (var i = 0; i < temp.length; i++) {
-			if (i % 2 === 0) {
-				styles.push([temp[i]]);
-			} else {
-				styles[styles.length - 1].push(temp[i]);
-			}
-		}
-
-		for (var i = 0; i < styles.length; i++) {
-			var style = styles[i];
-			var rules = style[0];
-
-			if (rules.indexOf(">") >= 0) {
-				rules = rules.replace(/\s*>\s*/gi, " &>");
-			}
-
-			if (rules.indexOf("@import") >= 0) {
-				var import_rule = rules.match(/@import.*;/gi)[0];
-				rules = rules.replace(/@import.*;/gi, "");
-				me.addRule(me.tree, [], import_rule);
-			}
-
-			if (rules.indexOf(",") >= 0) {
-				me.addRule(me.tree, [rules], style[1]);
-			} else {
-				var rules_split = rules.replace(/[:]/gi, " &:").split(/\s+/gi).select("val=>val.trim()").where("val=>val").select(function (it, i) {
-					return it.replace(/[&][>]/gi, "& > ");
-				});
-
-				me.addRule(me.tree, rules_split, style[1]);
-			}
-		}
-	};
-
-	me.buildMixinList = function (indent) {
-		var less = [];
-
-		for (var k in me.vendorMixins) {
-			var v = me.vendorMixins[k];
-			var args = [];
-
-			for (var i = 0; i < v; i++) {
-				args.push("@p" + i);
-			}
-
-			less.push(".vp-", k, "(", args.join(", "), ")");
-
-			if (me.options.blockFromNewLine) {
-				less.push("\n");
-			} else {
-				less.push(" ");
-			}
-
-			less.push("{\n");
-
-			me.options.vendorPrefixesList.forEach(function (vp, i) {
-				less.push(getIndent(indent + me.options.indentSize));
-				less.push(vp, "-", k, me.options.nameValueSeparator, args.join(" "), ";\n");
-			});
-
-			less.push(getIndent(indent + me.options.indentSize), k, me.options.nameValueSeparator, args.join(" "), ";\n");
-			less.push(/*getIndent(indent), */"}\n");
-		}
-
-		if (less.any()) {
-			less.push("\n");
-		}
-
-		return less.join("");
-	};
-
-	me.renderLess = function (tree, indent) {
+	renderLess (tree, indent) {
 		indent = indent || 0;
 
 		if (!tree) {
-			for (var k in me.colors) {
-				var v = me.colors[k];
-				me.less.push(v, me.options.nameValueSeparator, k, ";\n");
+			let colorVariables = [];
+			_.forOwn(this.vars, (v, k) => {
+				let usg = v.usages.sort();
+				if (usg.length > 1) {
+					colorVariables.push(`\n/*\n * ${usg.join('\n * ')}\n */\n`);
+				}
+				else {
+					colorVariables.push(usg.length ? `\n/* ${usg[0]} */\n`: '');
+				}
+
+				colorVariables.push(`${v.id}${this.options.nameValueSeparator}${k};\n`);
+			});
+
+			if (this.options.variablesPath) {
+				fs.appendFile(this.options.variablesPath, colorVariables.join('').trim() + '\n', ()=>{});
+				if (this.vars_index > 0) {
+					this.less.unshift(`@import (reference) "${path.basename(this.options.variablesPath)}";\n\n`);
+					this.less.push('\n');
+				}
+			}
+			else if (this.vars_index > 0) {
+				this.less.push.apply(this.less, colorVariables.filter((v, i) => (i & 1)));
+				this.less.push('\n');
 			}
 
-			if (me.colors_index > 0) {
-				me.less.push("\n");
+			if (this.introComment) {
+				this.less.unshift(this.introComment + '\n\n');
+			}
+			if (this.options.vendorMixins) {
+				this.less.push(this.buildMixinList(indent));
 			}
 
-			if (me.options.vendorMixins) {
-				me.less.push(me.buildMixinList(indent));
-			}
-
-			tree = me.tree;
+			tree = this.tree;
 		}
 
-		var index = 0;
+		let index = 0;
 
-		for (var i in tree) {
-			if (i == "children") {
+		for (let i in tree) {
+			if (i == 'children') {
 				continue;
 			}
 
-			var element = tree[i];
-			var children = element.children;
+			let element = tree[i];
+			let children = element.children;
 
-			if (i == "style") {
-				me.less.push(me.convertRules(element).join(";\n"), "\n");
-			} else {
+			if (i == 'style') {
+				let rules = stringSplitAndTrim(element, /\;(?!base64)/gi);
+				this.less.push(rules.join(';\n') + '\n');
+			}
+			else {
 				if (index > 0) {
-					me.less.push(me.options.blockSeparator);
+					this.less.push(this.options.blockSeparator);
 				}
 
-				//Selector indent
-				if (indent > 0) me.less.push(getIndent(indent), i);
-				else me.less.push(/*getIndent(indent),*/ i);
+				if (indent > 0) {
+					this.less.push(this.getIndent(indent));
+				}
+				this.less.push(i);
 
-				if (me.options.blockFromNewLine) {
-					me.less.push("\n", getIndent(indent));
-				} else {
-					me.less.push(" ");
+				if (this.options.blockFromNewLine) {
+					this.less.push('\n' + this.getIndent(indent));
+				}
+				else {
+					this.less.push(' ');
 				}
 
-				me.less.push("{\n");
+				this.less.push('{\n');
 
-				var style = element.style;
-				delete element.style;
+				if (element.style) {
+					let style = element.style;
+					if (typeof element.style !== 'string') {
+						console.warn("element.style invalid type!\n`%s`", JSON.stringify(element, null, '\t'));
+					}
 
-				if (style) {
-					var temp = me.convertRules(style);
+					delete element.style;
+					let ind = this.getIndent(indent + this.options.indentSize);
 
-					temp = temp.select(function (it, i) {
-						return getIndent(indent + me.options.indentSize) + it + ";";
-					});
-
-					me.less.push(temp.join("\n"), "\n");
+					// test if it's just comment in the rule...
+					if (this.markedCommentReg.test(style)) {
+						this.less.push(ind + style);
+					}
+					else {
+						this.less.push(stringSplitAndTrim(style, /\;(?!base64)/gi)
+										.map(it => `${ind}${it};`)
+										.join('\n') + '\n');
+					}
 
 					if (children && children.length) {
-						me.less.push(me.options.blockSeparator);
+						this.less.push(this.options.blockSeparator);
 					}
 				}
 
-				me.renderLess(element, indent + me.options.indentSize);
+				this.renderLess(element, indent + this.options.indentSize);
 
-				if (indent > 0) me.less.push(getIndent(indent), "}\n");
-				else me.less.push(/*getIndent(indent),*/ "}\n");
-				
+				if (indent > 0) {
+					this.less.push(this.getIndent(indent));
+				}
+				this.less.push('}\n');
+
 				index++;
 			}
 		}
-	};
+	}
 
-	function getIndent(size) {
-		size = size || me.options.indentSize;
+	finalize () {
+		let output = this.less.join('');
 
-		var result = '',
-			indent;
+		if (this.commentsMapper.length > 0) {
+			// revert all marked comment into output...
+			output = repeatReplaceUntil(output,
+				/(^[\t ]+)?\u2588(\d+)\u2502((?!\u2588);?)/gm,
+				(flags, indent, id, suffix, pos, haystack) => {
+					flags.done = true;
 
-		var max = size,
-			n = 0;
-		for (; n < max; n++) {
-			result += me.options.indentSymbol;
+					indent = indent || '';
+
+					let comment = this.commentsMapper[+id];
+					let commentedPropertyIndent = '';
+
+					// commented css property
+					if (cssp.some(rule => comment.indexOf(rule) === 0)) {
+						commentedPropertyIndent = indent;
+						for (let i = pos - 1; i > 0; --i) {
+							if (~'\n\r'.indexOf(haystack[i])) {
+								commentedPropertyIndent = haystack.substr(++i, 80).match(/^\s*/)[0];
+								break;
+							}
+						}
+					}
+					// multiline comment
+					else if (~comment.indexOf('\n')) {
+						comment = comment.replace(/\n/g, `\n${indent}`)
+								.replace(/^(\*\s+)/, `\n${indent} $1`) + '\n';
+					}
+
+					comment = `/* ${comment.replace(/^\*\s+/, '')} */`;
+					if (suffix === ';') {
+						if (commentedPropertyIndent) {
+							comment = `;\n${commentedPropertyIndent}${comment}`;
+							indent = '';
+						}
+						else {
+							comment = '; ' + comment;
+						}
+					}
+					else {
+						comment += `\n${indent}`;
+					}
+
+					return indent + comment;
+				}
+			);
 		}
 
-		return result;
-		/*return (new Array(size)).select(function (it, i) {
-			return me.options.indentSymbol;
-		}).join("");*/
+		this.push(output);
 	}
-
-	ctor();
 };
-
-
-module.exports = function(cssString, options) {
-	if (!cssString) {
-		console.log('cssString require');
-		return false;
-	}
-
-	var lessInst = new css2less(cssString, options || {});
-
-	lessInst.processLess();
-
-	return lessInst.less;
-};
+//-----------------------------------------------------------------------------
+module.exports = css2less;
